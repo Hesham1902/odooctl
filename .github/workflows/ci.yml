@@ -1,9 +1,14 @@
 name: CI
 
+# NOTE: automatic push/PR triggers are disabled because the GitHub account's
+# Actions are locked by a billing-review flag ($0 balance - see README history).
+# Run manually from the Actions tab ("Run workflow") once unlocked, or restore:
+#   on:
+#     push:
+#       branches: [main]
+#     pull_request:
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   test:

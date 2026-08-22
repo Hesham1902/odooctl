@@ -1,0 +1,11 @@
+#!/bin/sh
+# Local quality gate: mirrors CI (ruff + pytest) before every push.
+echo "odooctl pre-push: lint + tests..."
+cd "$(dirname "$0")/../.."
+VENV=".venv/bin"
+if [ ! -x "$VENV/pytest" ]; then
+  echo "skipped: .venv not found (run: python3 -m venv .venv && .venv/bin/pip install -e '.[dev]')"
+  exit 0
+fi
+"$VENV/ruff" check src tests || exit 1
+"$VENV/python" -m pytest -q || exit 1
