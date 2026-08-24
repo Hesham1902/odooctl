@@ -228,11 +228,11 @@ def test_filter_untracked_matches_short_and_long_ids():
     """docker inspect yields sha256:<64hex>; docker images --json yields 12 chars."""
     images = [
         {"id": "1a2b3c4d5e6f", "tag": "cladex-internal-web:latest", "size_bytes": 755_000_000},
-        {"id": "9f8e7d6c5b4a", "tag": "visionsolutions-web:latest", "size_bytes": 3_300_000_000},
+        {"id": "9f8e7d6c5b4a", "tag": "acme-web:latest", "size_bytes": 3_300_000_000},
     ]
     referenced = {"sha256:" + "1a2b3c4d5e6f" + "0" * 52}
     out = space.filter_untracked(images, referenced)
-    assert [i["tag"] for i in out] == ["visionsolutions-web:latest"]
+    assert [i["tag"] for i in out] == ["acme-web:latest"]
 
 
 def test_anonymous_volume_orphans_filters_hash_names(monkeypatch):

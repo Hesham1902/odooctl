@@ -92,7 +92,7 @@ def probe(target, port=None, key=None):
             f"Cannot reach {target} over SSH.\n{err}\n\n"
             "Hints:\n"
             "- Use the exact string from your Odoo.sh 'SSH' button "
-            "(it can look like 'ssh 22565520@visionsol.odoo.com').\n"
+            "(it can look like 'ssh 1234567@acme.odoo.com').\n"
             "- Add your public key under odoo.sh project Settings -> Keys.\n"
             f"- Test manually: ssh {target} 'ls -1 /backup.daily/'"
         )

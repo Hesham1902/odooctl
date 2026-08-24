@@ -431,17 +431,17 @@ def test_pull_save_then_plain_reuse(tmp_path, monkeypatch):
 
     # 1st run: full flags + --save
     r1 = CliRunner().invoke(cli.main, [
-        "pull", "acme", "--from", "ssh://22565520@visionsol.odoo.com",
-        "--key", str(key_file), "-d", "vision_prod", "--save"])
+        "pull", "acme", "--from", "ssh://1234567@acme.odoo.com",
+        "--key", str(key_file), "-d", "acme_prod", "--save"])
     assert r1.exit_code == 0, r1.output
     assert "saved pull settings" in r1.output
     saved = registry.load_pull_settings("acme")
-    assert saved["from"] == "ssh://22565520@visionsol.odoo.com"
-    assert saved["db"] == "vision_prod"
+    assert saved["from"] == "ssh://1234567@acme.odoo.com"
+    assert saved["db"] == "acme_prod"
     assert saved["key"] == str(key_file)
 
     # 2nd run: project only
     r2 = CliRunner().invoke(cli.main, ["pull", "acme"])
     assert r2.exit_code == 0, r2.output
-    assert seen["target"] == "22565520@visionsol.odoo.com"
+    assert seen["target"] == "1234567@acme.odoo.com"
     assert seen["key"] == str(key_file)

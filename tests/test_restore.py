@@ -79,20 +79,20 @@ def test_zip_server_version_corrupt_zip(tmp_path):
 
 
 def test_detect_format_odoosh_raw_dir(tmp_path):
-    d = tmp_path / "visionsol_daily"
+    d = tmp_path / "acme_daily"
     d.mkdir()
-    (d / "visionsol_daily.sql.gz").write_bytes(b"\x1f\x8b\x08...")
+    (d / "acme_daily.sql.gz").write_bytes(b"\x1f\x8b\x08...")
     assert restore.detect_format(d) == "odoosh_raw"
 
 
 def test_target_name_odoosh_raw_from_json_meta(tmp_path):
     import json
 
-    d = tmp_path / "visionsol-vision-solutions-22565520_daily"
+    d = tmp_path / "acme-prod-daily"
     d.mkdir()
-    (d / "visionsol_daily.sql.gz").write_bytes(b"\x1f\x8b")
-    (d / "visionsol_daily.json").write_text(json.dumps({"database": "vision_solutions_prod"}))
-    assert restore.target_name(d, "odoosh_raw") == "vision_solutions_prod"
+    (d / "acme_daily.sql.gz").write_bytes(b"\x1f\x8b")
+    (d / "acme_daily.json").write_text(json.dumps({"database": "acme_prod"}))
+    assert restore.target_name(d, "odoosh_raw") == "acme_prod"
 
 
 def test_target_name_odoosh_raw_no_meta(tmp_path):
@@ -262,7 +262,7 @@ def test_restore_odoosh_raw_create_style_renames(tmp_path, monkeypatch):
     monkeypatch.setattr(restore.compose, "run_with_stdin_stream", fake_stream)
 
     entry = {"services": {"web": "web", "db": "db"}, "db_user": "odoo"}
-    info = restore.restore("/proj", entry, d, "vision_prod")
+    info = restore.restore("/proj", entry, d, "acme_prod")
 
     assert info["format"] == "odoosh_raw"
     assert info["skipped_extensions"] == []
@@ -275,4 +275,4 @@ def test_restore_odoosh_raw_create_style_renames(tmp_path, monkeypatch):
     terminates = [c for c in exec_calls if any("pg_terminate_backend" in str(a) for a in c[1])]
     assert terminates
     renames = [c for c in exec_calls if any("ALTER DATABASE" in str(a) for a in c[1])]
-    assert renames and 'ALTER DATABASE "prod-daily" RENAME TO "vision_prod"' in renames[0][1][-1]
+    assert renames and 'ALTER DATABASE "prod-daily" RENAME TO "acme_prod"' in renames[0][1][-1]

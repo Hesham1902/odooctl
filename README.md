@@ -283,11 +283,24 @@ odooctl dev acme --ext py,xml             # watch more extensions
 odooctl dev acme --debounce 1.5           # settle time before restarting
 ```
 
-Watches `custom_addons/` from the **host side** and runs the equivalent of
-`docker compose restart web` whenever Python files change. This is deliberately a
-host-side poller: on macOS bind mounts, inotify events never reach the container,
-so Odoo's built-in `--dev=reload` usually does not fire. Edits are debounced
-(default 0.8 s) so editor save bursts trigger one restart, not five. Ctrl-C to stop.
+Watches `custom_addons/` from the host side and restarts web when Python files
+change. This is deliberately a host-side poller: on macOS bind mounts, inotify
+events never reach the container, so Odoo's built-in `--dev=reload` usually does not
+fire.
+
+What happens when you save a file:
+
+1. The poller (every 0.5 s) notices the change.
+2. It waits 0.8 s (`--debounce`) and re-checks, so an editor save burst triggers one
+   restart, not five. It prints which files changed.
+3. It runs the equivalent of `docker compose restart web`. A few seconds later the
+   new code is live; reload your browser tab.
+
+Ctrl-C stops it.
+
+One limit: a restart picks up `.py` changes only. XML and data files need a
+module upgrade (`-u`), which a restart does not do. If you edit views often, run
+`odooctl upgrade <project> --changed -d <db>` afterwards.
 
 ## `diff` - compare module state between databases
 
@@ -469,17 +482,23 @@ Behaviour:
 ## `sanitize` - make a restored prod DB safe
 
 Restored production databases come with live cron jobs, queued e-mails and configured
-SMTP servers - the classic "local copy just e-mailed 4,000 customers" accident.
-`sanitize` defuses all of it through the ORM (same mechanism as `reset-admin`):
+SMTP servers. That is how a local dev copy ends up e-mailing real customers.
+`sanitize` switches all of it off, then scrubs personal data:
 
 ```bash
 odooctl sanitize acme -d acme-prod            # or: odooctl restore acme <backup> --sanitize
 ```
 
-It pauses all scheduled actions (`ir.cron`), deletes queued mails (`mail.mail` in
-`outgoing`), disables outgoing mail + fetchmail servers, and scrubs PII from
-`res.partner`: email, phone/mobile and VAT are cleared (in batches, committing as it
-goes). Options:
+What it does, in order:
+
+1. Pauses every scheduled action (`ir.cron`).
+2. Deletes queued mails (`mail.mail` in state `outgoing`).
+3. Disables outgoing mail servers and fetchmail servers.
+4. Clears `email`, `phone`, `mobile` and `vat` on all partners (in batches, committing
+   as it goes). Raw SQL is used on purpose, so custom modules that override
+   `res.partner.write()` cannot block the scrub.
+
+Each step prints how many records it touched.
 
 | Option | Meaning |
 |---|---|
@@ -489,52 +508,64 @@ goes). Options:
 
 ## `pull` - latest backup over SSH, restored, in one command
 
-One-time setup (save the connection details for the project):
+`pull` replaces the old cycle of downloading a zip from odoo.sh in the browser and
+restoring it by hand. One command fetches the newest backup, restores it, and gives
+you a working `admin`/`admin` login.
+
+One-time setup, per project:
 
 ```bash
-odooctl pull vsolutions \
-    --from ssh://22565520@visionsol.odoo.com \
-    --key ~/.ssh/id_ed25519_vsolution \
-    -d vision_prod --save
+odooctl pull acme \
+    --from ssh://1234567@acme.odoo.com \
+    --key ~/.ssh/id_ed25519_acme \
+    -d acme_prod --save
 ```
 
 Every time after that:
 
 ```bash
-odooctl pull vsolutions          # that's it
+odooctl pull acme
 ```
 
-Other runs:
+Useful flags:
 
 ```bash
-odooctl pull vsolutions --keep-download        # keep the downloaded bundle
-odooctl pull vsolutions --yes                  # script it: skip the overwrite prompt
-odooctl pull vsolutions --path /backup/x.sql.gz   # one-off different file
+odooctl pull acme -d other_name    # restore under a different db name
+odooctl pull acme --yes            # skip the overwrite prompt (scripts/CI)
+odooctl pull acme --keep-download  # keep the downloaded bundle
+odooctl pull acme --with-filestore # also fetch attachments (large)
+odooctl pull acme --path /backup/x.sql.gz   # one-off different file
 ```
 
-During the restore odooctl stops the web container and starts it back afterwards
-(also on failure), so Postgres never refuses the DROP/RENAME because Odoo holds
-connections. SQL errors abort the restore (`ON_ERROR_STOP`) instead of leaving you
-a half-imported database, and extensions your local postgres lacks (odoo.sh
-pre-installs pgvector) are skipped with a warning.
+What a pull does, in order:
 
-How it works: SSH in (key-based auth, `BatchMode`) and find the newest backup -
-by default in Odoo.sh's `~/backup.daily`, then `~/backup.weekly`, then
-`~/backup.monthly` (root-level variants checked too); pass `--path` to override.
-Odoo.sh stores raw backups as `<name>.sql.gz` plus a sibling directory mirroring
-`$HOME`, with the filestore under `home/odoo/data`. **By default only the SQL dump
-is downloaded** (dev copies rarely need attachments) - pass `--with-filestore` to
-also stream the filestore via tar-over-ssh. Restores the DB (and filestore when
-requested), resets admin to `admin`/`admin`, then deletes the download unless
-`--keep-download`.
+1. Connects over SSH (key auth only, no passwords) and finds the newest backup:
+   `~/backup.daily`, then `~/backup.weekly`, then `~/backup.monthly` on odoo.sh
+   hosts. `--path` points at a specific file.
+2. Downloads the SQL dump (typically a few dozen MB compressed). The filestore is
+   skipped by default; `--with-filestore` streams it too, with a progress counter.
+3. Picks the target database: `-d NAME`, else the name saved with `--save`, else
+   `<project>_pulled`. If that database already exists you are asked to confirm
+   dropping it.
+4. Stops the web container so Postgres can drop and rename without connection
+   conflicts, replays the dump, and starts web again (also on failure).
+5. Resets the main internal user to `admin`/`admin` and prints the project URL.
 
-Saved settings live in `~/.config/odooctl/config.json` under `"pull"` (survive
-`discover`; delete them there to re-prompt).
+Safety behaviour worth knowing:
 
-> **Odoo.sh note:** there is no public REST API for backups - SSH access is the
-> supported programmatic route. Add your public key under your Odoo.sh profile's
-> *SSH Keys* section, and use the exact SSH string shown by the project's *SSH*
-> button (it can look like `ssh 22565520@project.odoo.com`).
+- The replay runs with `ON_ERROR_STOP`. A broken dump aborts loudly instead of
+  leaving you a half-imported database.
+- Extensions your local postgres does not have (odoo.sh pre-installs pgvector) are
+  skipped with a warning, the same way a manual psql restore would.
+- Interrupted downloads are reused on the next run, so a failed pull does not
+  re-download the whole dump.
+- Saved settings live in `~/.config/odooctl/config.json` under `"pull"`. They survive
+  `discover`; delete them there to start over.
+
+> **Odoo.sh note:** there is no public REST API for backups. SSH access is the
+> supported route. Add your public key under your odoo.sh profile's *SSH Keys*
+> section, and use the exact SSH string shown by the project's *SSH* button (it
+> looks like `ssh 1234567@acme.odoo.com`).
 
 ## `reset-admin` - regaining admin access
 
@@ -639,8 +670,7 @@ odooctl test acme --all -x                     # stop at the first failing modul
 ```
 
 `--all` / `--changed` run modules one by one, each in its own throwaway DB, then print
-a summary table (PASS/FAIL per module). Exit code is non-zero if anything failed -
-safe for git hooks and CI.
+a summary table (PASS/FAIL per module).
 
 One shot, it:
 
@@ -818,7 +848,23 @@ You connected to psql without `-d`. PostgreSQL falls back to a database named af
 the user. Always pass `odooctl psql <project> -d <database>`.
 
 **`Error: Multiple databases: ...`**
-`addons` needs to know which DB to read module state from. Pass `-d <database>`.
+`addons`, `shell` and `diff` need to know which DB to act on. Pass `-d <database>`.
+
+**`pull` says "Permission denied (publickey)"**
+Your SSH key is not registered with the host. For odoo.sh: add your public key under
+your profile's *SSH Keys* section, then test with the exact string from the project's
+*SSH* button: `ssh <user>@<host> 'echo ok'`. `pull` uses key auth only, never
+passwords.
+
+**`pull` says "No backup (*.sql.gz) found on remote"**
+It scans `~/backup.daily`, `~/backup.weekly` and `~/backup.monthly` on the remote
+host. Your host stores backups elsewhere? Point at the file directly:
+`odooctl pull <project> --path /path/to/backup.sql.gz`.
+
+**A restore fails with `could not open extension control file ...`**
+The dump uses a Postgres extension (e.g. pgvector) your local db image does not ship.
+`pull` and `restore` skip missing extensions automatically and warn. If a table
+actually needs the extension, add it to your `postgres.Dockerfile` and rebuild.
 
 **First `init` takes ~10 minutes**
 No prebuilt image existed for that Odoo version/Dockerfile yet, so a real build ran.

@@ -303,7 +303,7 @@ def shell(project, db):
 @click.option("--no-reset-admin", is_flag=True, help="Keep restored credentials as-is.")
 @click.option("--keep-download", is_flag=True, help="Keep the downloaded zip after restoring.")
 @click.option("--key", type=click.Path(exists=True), default=None,
-              help="SSH private key file (e.g. ~/.ssh/id_ed25519_vsolution).")
+              help="SSH private key file (e.g. ~/.ssh/id_ed25519_acme).")
 @click.option("--save", is_flag=True,
               help="Remember --from/--path/--key/--db for this project; afterwards just: odooctl pull PROJECT.")
 @click.option("--with-filestore", is_flag=True,
