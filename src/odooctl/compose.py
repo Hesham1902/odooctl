@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -80,12 +81,14 @@ def service_state(project_path, service):
     return None, None
 
 
-def exec_service(project_path, service, *cmd, capture=True, input_bytes=None, user=None, check=True):
+def exec_service(project_path, service, *cmd, capture=True, input_bytes=None, user=None,
+                 check=True, stdout_file=None, stdin_file=None):
     args = ["exec", "-T"]
     if user:
         args += ["-u", user]
     args += [service] + list(cmd)
-    return run(project_path, *args, capture=capture, input_bytes=input_bytes, check=check)
+    return run(project_path, *args, capture=capture, input_bytes=input_bytes, check=check,
+               stdout_file=stdout_file, stdin_file=stdin_file)
 
 
 def databases(project_path, db_user="odoo"):
@@ -139,6 +142,38 @@ def find_built_image(entry, role):
         if found:
             return found
     return None
+
+
+def run_with_stdin_stream(project_path, args, chunks):
+    """Run docker compose <args>, pumping an iterable of bytes into its stdin.
+
+    Needed because passing a file-like wrapper (e.g. gzip.GzipFile) as stdin
+    hands the child the raw underlying bytes, not the decompressed stream.
+    """
+    cmd = _base(project_path) + list(args)
+    with tempfile.TemporaryFile() as errf:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL, stderr=errf)
+        try:
+            for chunk in chunks:
+                proc.stdin.write(chunk)
+        except BrokenPipeError:
+            pass
+        except Exception:
+            proc.kill()
+            raise
+        finally:
+            try:
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
+        rc = proc.wait()
+        errf.seek(0)
+        err = errf.read().decode(errors="replace")
+    if rc != 0:
+        tail = "\n".join(err.strip().splitlines()[-20:])
+        raise DockerError(tail or f"docker compose {' '.join(args[:2])} failed (rc={rc})")
+    return rc
 
 
 def web_running(project_path, entry):

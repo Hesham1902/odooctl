@@ -5,6 +5,8 @@ from pathlib import Path
 
 from . import compose
 
+FILESTORE_DIR = "/var/lib/odoo/filestore"
+
 FAIL_LINE_RE = re.compile(r"\b(FAIL|ERROR): (\w[\w\.\$]*)")
 SUMMARY_RE = re.compile(r"(\d+) failed(?:,\s*(\d+) error\(s\))?\s+of\s+(\d+) tests")
 RAN_RE = re.compile(r"of\s+(\d+)\s+tests|(?<![\w])Ran\s+(\d+)\s+tests")
@@ -40,6 +42,21 @@ def drop_db_if_exists(project_path, entry, db):
     )
     compose.exec_service(project_path, "db", "psql", "-U", user, "-d", "postgres",
                          "-c", f'DROP DATABASE IF EXISTS "{db}"')
+
+
+def drop_filestore(project_path, entry, db):
+    web = entry["services"]["web"]
+    compose.exec_service(
+        project_path, web, "rm", "-rf", f"{FILESTORE_DIR}/{db}", check=False,
+    )
+
+
+def cleanup_db_artifacts(project_path, entry, db):
+    """Drop a database AND its on-disk filestore (Postgres/Odoo never clean these up)."""
+    try:
+        drop_db_if_exists(project_path, entry, db)
+    finally:
+        drop_filestore(project_path, entry, db)
 
 
 def analyze(text, returncode):
@@ -89,7 +106,7 @@ def run_tests(project_path, entry, module, db, test_tags=None, keep_db=False, ti
 
     if not keep_db:
         try:
-            drop_db_if_exists(project_path, entry, db)
+            cleanup_db_artifacts(project_path, entry, db)
         except compose.DockerError:
             pass
 

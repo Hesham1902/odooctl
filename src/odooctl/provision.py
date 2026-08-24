@@ -190,7 +190,7 @@ def init_project(name, parent_dir, version=None, template_slug=None, dry_run=Fal
         "ports": ports,
         "db_user": tmpl_entry.get("db_user", "odoo"),
         "custom_addons": str(target / "custom_addons"),
-        "images": {"web": None, "db": None},
+        "images": {"web": f"{slug}-web", "db": f"{slug}-db"},
     }
     registry.register(slug, entry)
     return plan, entry

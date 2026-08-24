@@ -5,9 +5,10 @@ One CLI for all your local Odoo docker environments.
 If you maintain more than one Odoo project locally, you juggle different container
 names, ports, databases and long `docker compose exec ...` incantations for each one.
 `odooctl` discovers your projects once, stores them in a registry, and gives you one
-uniform command surface - from starting/stopping environments to restoring Odoo.sh
-backups, bootstrapping brand-new projects in seconds, and running addon tests in
-throwaway databases.
+uniform command surface - from starting/stopping environments and auto-restarting on
+code changes, to pulling the latest backup over SSH, restoring Odoo.sh backups safely
+(crons paused, mail purged), bootstrapping brand-new projects in seconds, and running
+addon tests in throwaway databases.
 
 Works on **macOS** and **Linux**.
 
@@ -27,22 +28,31 @@ Works on **macOS** and **Linux**.
 5. [`status` - see everything at a glance](#status---see-everything-at-a-glance)
 6. [`up` / `down` / `restart` - lifecycle management](#up--down--restart---lifecycle-management)
 7. [`logs` and `url` - following output, opening the app](#logs-and-url---following-output-opening-the-app)
-8. [`psql` - direct database access](#psql---direct-database-access)
-9. [`addons` - inspecting custom addons](#addons---inspecting-custom-addons)
-10. [`upgrade` - upgrading one module safely](#upgrade---upgrading-one-module-safely)
-11. [`backup` - snapshotting a database](#backup---snapshotting-a-database)
-12. [`restore` - restoring backups (incl. Odoo.sh zips)](#restore---restoring-backups-incl-odoosh-zips)
-13. [`reset-admin` - regaining admin access](#reset-admin---regaining-admin-access)
-14. [`reset` - wiping a database](#reset---wiping-a-database)
-15. [`init` - bootstrapping a new project](#init---bootstrapping-a-new-project)
-16. [`test` - running addon tests in isolation](#test---running-addon-tests-in-isolation)
+8. [`dev` - auto-restart on code changes](#dev---auto-restart-on-code-changes)
+9. [`diff` - compare module state between databases](#diff---compare-module-state-between-databases)
+10. [`deps` - dependency tree of an addon](#deps---dependency-tree-of-an-addon)
+11. [`psql` - direct database access](#psql---direct-database-access)
+12. [`shell` - Odoo ORM REPL](#shell---odoo-orm-repl)
+13. [`addons` - inspecting custom addons](#addons---inspecting-custom-addons)
+14. [`upgrade` - upgrading modules safely](#upgrade---upgrading-modules-safely)
+15. [`backup` - snapshotting a database](#backup---snapshotting-a-database)
+16. [`restore` - restoring backups (incl. Odoo.sh zips)](#restore---restoring-backups-incl-odoosh-zips)
+17. [`sanitize` - make a restored prod DB safe](#sanitize---make-a-restored-prod-db-safe)
+18. [`pull` - latest backup over SSH, restored, in one command](#pull---latest-backup-over-ssh-restored-in-one-command)
+19. [`reset-admin` - regaining admin access](#reset-admin---regaining-admin-access)
+20. [`reset` - wiping a database](#reset---wiping-a-database)
+21. [`init` - bootstrapping a new project](#init---bootstrapping-a-new-project)
+22. [`test` - running addon tests in isolation](#test---running-addon-tests-in-isolation)
+23. [`df` - where your disk space went](#df---where-your-disk-space-went)
+24. [`gc` - reclaiming wasted space](#gc---reclaiming-wasted-space)
+25. [`remove` - deleting a project](#remove---deleting-a-project)
 
 **Reference**
 
-17. [Configuration file reference](#configuration-file-reference)
-18. [macOS vs Linux notes](#macos-vs-linux-notes)
-19. [Troubleshooting](#troubleshooting)
-20. [Development](#development)
+26. [Configuration file reference](#configuration-file-reference)
+27. [macOS vs Linux notes](#macos-vs-linux-notes)
+28. [Troubleshooting](#troubleshooting)
+29. [Development](#development)
 
 ---
 
@@ -173,17 +183,23 @@ error listing them.
 | `up` | Start a project's containers |
 | `down` | Stop a project's containers |
 | `restart` | Restart one service |
-| `logs` | Show or stream logs |
+| `logs` | Show / stream logs (`--errors`: only errors + tracebacks) |
+| `dev` | Watch `custom_addons` and restart web on `.py` changes |
 | `url` | Open the project in a browser |
 | `psql` | Interactive SQL session |
+| `shell` | Interactive `odoo shell` session |
 | `addons` | List custom addons (+ install state) |
-| `upgrade` | Upgrade one addon in one database |
+| `deps` | Dependency tree, reverse deps, cycle detection |
+| `diff` | Compare module state/version between two databases |
+| `upgrade` | Upgrade addon(s) - explicit list or git-changed |
 | `backup` | Dump a database + filestore |
-| `restore` | Restore a backup (dir / dump / Odoo.sh zip) |
+| `restore` | Restore a backup (dir / dump / Odoo.sh zip), optional `--sanitize` |
+| `sanitize` | Make a restored prod DB safe: pause crons, kill mail, scrub PII |
+| `pull` | Fetch the latest backup over SSH and restore it |
 | `reset-admin` | Reset the main user's login/password |
 | `reset` | Drop and recreate a database |
 | `init` | Bootstrap a new project from an existing one |
-| `test` | Run addon tests in a disposable DB |
+| `test` | Run addon tests in a disposable DB (one module / `--all` / `--changed`) |
 
 Detailed documentation for every command follows.
 
@@ -250,11 +266,52 @@ odooctl logs acme             # last 100 lines of the web container
 odooctl logs acme -f          # stream live (Ctrl-C to stop)
 odooctl logs acme -t 500      # last 500 lines
 odooctl logs acme --service db
+
+odooctl logs acme --errors    # only ERROR/CRITICAL + their tracebacks (scans last 2000)
+odooctl logs acme -e -f       # stream, filtered to errors
 ```
 
 ```bash
 odooctl url acme              # prints http://localhost:<port> and opens browser
 ```
+
+## `dev` - auto-restart on code changes
+
+```bash
+odooctl dev acme                          # restart web when .py files change
+odooctl dev acme --ext py,xml             # watch more extensions
+odooctl dev acme --debounce 1.5           # settle time before restarting
+```
+
+Watches `custom_addons/` from the **host side** and runs the equivalent of
+`docker compose restart web` whenever Python files change. This is deliberately a
+host-side poller: on macOS bind mounts, inotify events never reach the container,
+so Odoo's built-in `--dev=reload` usually does not fire. Edits are debounced
+(default 0.8 s) so editor save bursts trigger one restart, not five. Ctrl-C to stop.
+
+## `diff` - compare module state between databases
+
+```bash
+odooctl diff acme acme-prod acme-test
+odooctl diff acme acme-prod acme-test -g sale     # filter by name substring
+```
+
+Reads `ir_module_module` from both databases and shows every module whose state or
+version differs, plus modules that exist in only one of them. Answers "what's
+installed differently here?" before you debug environment-specific bugs.
+
+## `deps` - dependency tree of an addon
+
+```bash
+odooctl deps acme sale_approval_flow
+```
+
+Parses manifests on disk (no database needed) and prints:
+
+- the dependency tree of the module - custom deps with versions, Odoo/core deps marked `[external]`,
+- transitive counts (custom vs external),
+- who depends on this module (`required by:`),
+- a loud warning if the module is part of a dependency cycle.
 
 ## `psql` - direct database access
 
@@ -269,6 +326,30 @@ Ctrl-D.
 > Why `-d` matters: without a database name psql tries to connect to a database named
 > after the *user* (usually `odoo`). That database normally doesn't exist - this is a
 > PostgreSQL default, not a bug.
+
+## `shell` - Odoo ORM REPL
+
+```bash
+odooctl shell acme                     # single-database project: db picked automatically
+odooctl shell acme -d acme-prod        # specific database
+```
+
+Drops you into an interactive `odoo shell` (`env['res.partner']` and friends) inside
+the web container, with the project's config and the chosen database loaded. The web
+container must be running; with exactly one database it is picked automatically,
+otherwise pass `-d`.
+
+Typical uses:
+
+- quick data inspection/fixes through the ORM (constraints and business logic apply):
+  ```python
+  >>> env['sale.order'].search_count([('state', '=', 'draft')])
+  >>> u = env['res.users'].browse(2); u.tz = 'Europe/Berlin'; env.cr.commit()
+  ```
+- testing a snippet before putting it into a module or server action.
+
+Exit with `exit()` or Ctrl-D. Changes are only persisted where you call
+`env.cr.commit()` yourself.
 
 ## `addons` - inspecting custom addons
 
@@ -301,18 +382,24 @@ Pick one with --db (-d).
 With exactly one database it is picked automatically. Pass `--db` explicitly in
 scripts.
 
-## `upgrade` - upgrading one module safely
+## `upgrade` - upgrading modules safely
 
 ```bash
-odooctl upgrade acme sale_approval_flow -d acme-prod
+odooctl upgrade acme sale_approval_flow -d acme-prod          # one module
+odooctl upgrade acme mod_a mod_b -d acme-prod                 # several at once (single odoo run)
+odooctl upgrade acme --changed -d acme-prod                   # everything changed vs git HEAD
+odooctl upgrade acme --changed --since main -d acme-prod      # vs another ref
 odooctl upgrade acme my_module -d acme-prod --keep-stopped
 ```
+
+`--changed` maps `git diff --name-only HEAD` (plus untracked files) onto
+`custom_addons/<module>/...` paths, so "upgrade what I'm working on" is one command.
 
 What it does, in order:
 
 1. Checks whether the web service is currently running.
 2. If yes, stops it (a running instance would conflict with the upgrade worker).
-3. Runs `odoo -u <module> --stop-after-init` in a throwaway container - the module's
+3. Runs `odoo -u <m1,m2,...> --stop-after-init` in a throwaway container - the modules'
    Python/XML/data is reloaded and validated.
 4. Restarts web afterwards (unless `--keep-stopped`).
 
@@ -340,6 +427,13 @@ Produces, under `<project>/backups/odooctl/<db>_<timestamp>/`:
 
 Prints total size and the exact restore command. Run it before risky upgrades,
 module installs, or data imports.
+
+Keep only the newest N snapshots of that database (older ones are deleted after
+the new backup is written):
+
+```bash
+odooctl backup acme -d acme-prod --keep 3
+```
 
 ## `restore` - restoring backups (incl. Odoo.sh zips)
 
@@ -370,6 +464,77 @@ Behaviour:
   works.
 - After restore, the main internal user is automatically reset to `admin`/`admin`
   (see next section). Disable with `--no-reset-admin`.
+- Add `--sanitize` to make the result safe to work on locally (see `sanitize`).
+
+## `sanitize` - make a restored prod DB safe
+
+Restored production databases come with live cron jobs, queued e-mails and configured
+SMTP servers - the classic "local copy just e-mailed 4,000 customers" accident.
+`sanitize` defuses all of it through the ORM (same mechanism as `reset-admin`):
+
+```bash
+odooctl sanitize acme -d acme-prod            # or: odooctl restore acme <backup> --sanitize
+```
+
+It pauses all scheduled actions (`ir.cron`), deletes queued mails (`mail.mail` in
+`outgoing`), disables outgoing mail + fetchmail servers, and scrubs PII from
+`res.partner`: email, phone/mobile and VAT are cleared (in batches, committing as it
+goes). Options:
+
+| Option | Meaning |
+|---|---|
+| `--names` | Also replace partner names with `Partner #id` |
+| `--keep-crons` | Leave scheduled actions enabled |
+| `--keep-mail` | Skip mail queue purge / server disable |
+
+## `pull` - latest backup over SSH, restored, in one command
+
+One-time setup (save the connection details for the project):
+
+```bash
+odooctl pull vsolutions \
+    --from ssh://22565520@visionsol.odoo.com \
+    --key ~/.ssh/id_ed25519_vsolution \
+    -d vision_prod --save
+```
+
+Every time after that:
+
+```bash
+odooctl pull vsolutions          # that's it
+```
+
+Other runs:
+
+```bash
+odooctl pull vsolutions --keep-download        # keep the downloaded bundle
+odooctl pull vsolutions --yes                  # script it: skip the overwrite prompt
+odooctl pull vsolutions --path /backup/x.sql.gz   # one-off different file
+```
+
+During the restore odooctl stops the web container and starts it back afterwards
+(also on failure), so Postgres never refuses the DROP/RENAME because Odoo holds
+connections. SQL errors abort the restore (`ON_ERROR_STOP`) instead of leaving you
+a half-imported database, and extensions your local postgres lacks (odoo.sh
+pre-installs pgvector) are skipped with a warning.
+
+How it works: SSH in (key-based auth, `BatchMode`) and find the newest backup -
+by default in Odoo.sh's `~/backup.daily`, then `~/backup.weekly`, then
+`~/backup.monthly` (root-level variants checked too); pass `--path` to override.
+Odoo.sh stores raw backups as `<name>.sql.gz` plus a sibling directory mirroring
+`$HOME`, with the filestore under `home/odoo/data`. **By default only the SQL dump
+is downloaded** (dev copies rarely need attachments) - pass `--with-filestore` to
+also stream the filestore via tar-over-ssh. Restores the DB (and filestore when
+requested), resets admin to `admin`/`admin`, then deletes the download unless
+`--keep-download`.
+
+Saved settings live in `~/.config/odooctl/config.json` under `"pull"` (survive
+`discover`; delete them there to re-prompt).
+
+> **Odoo.sh note:** there is no public REST API for backups - SSH access is the
+> supported programmatic route. Add your public key under your Odoo.sh profile's
+> *SSH Keys* section, and use the exact SSH string shown by the project's *SSH*
+> button (it can look like `ssh 22565520@project.odoo.com`).
 
 ## `reset-admin` - regaining admin access
 
@@ -401,9 +566,8 @@ How it works:
 odooctl reset acme -d acme-test --yes
 ```
 
-Drops the database and recreates it empty (terminates active connections first).
-Confirmation prompt unless `--yes`. Never touches the filestore - combine with a fresh
-install if you need full cleanliness.
+Drops the database, removes its filestore from disk, and recreates it empty
+(terminates active connections first). Confirmation prompt unless `--yes`.
 
 ## `init` - bootstrapping a new project
 
@@ -467,7 +631,16 @@ Options:
 odooctl test acme sale_approval_flow
 odooctl test acme my_module --keep-db          # inspect DB after failure
 odooctl test acme my_module -t /my_module.test_feature
+
+odooctl test acme --all                        # every installable custom addon, sequentially
+odooctl test acme --changed                    # only addons changed vs git HEAD
+odooctl test acme --changed --since main       # ...vs another ref
+odooctl test acme --all -x                     # stop at the first failing module
 ```
+
+`--all` / `--changed` run modules one by one, each in its own throwaway DB, then print
+a summary table (PASS/FAIL per module). Exit code is non-zero if anything failed -
+safe for git hooks and CI.
 
 One shot, it:
 
@@ -493,6 +666,98 @@ Options:
 > Writing tests: put them in `<module>/tests/test_<behavior>.py`, subclass
 > `TransactionCase` (model logic) or `HttpCase` (controllers), import them from
 > `<module>/tests/__init__.py`. See Odoo's official testing docs.
+
+---
+
+## `df` - where your disk space went
+
+```bash
+odooctl df              # every registered project
+odooctl df acme         # one project
+```
+
+Prints global Docker totals (images, volumes, build cache, dangling layers, how
+much is instantly reclaimable), then per project:
+
+- web/db image references and sizes - images shared across projects are marked
+  `(shared ×N)` so identical builds don't look triple-counted,
+- **bind-mounted data dirs** measured on the host (`pg data`, `odoo data`) - this
+  is where most projects keep their real gigabytes, invisible to `docker system df`,
+- named volumes with sizes (`acme_pgdata`, ...) if the project uses any,
+- `backups/odooctl/` size and snapshot count,
+- `backups/test_logs/` size and file count,
+- a per-project total, plus an overall summary.
+
+It also lists **untracked tagged images** (e.g. builds left behind by renamed
+projects) with their sizes.
+
+## `gc` - reclaiming wasted space
+
+Docker dev setups leak silently: dangling image layers after every rebuild,
+build cache, `test_*` databases, filestores of dropped databases that Odoo never
+removes, old backups and test logs. `gc` finds them all - **and only touches
+projects registered in odooctl**:
+
+```bash
+odooctl gc                       # dry run: shows the plan + sizes, changes nothing
+odooctl gc --apply               # execute the plan
+odooctl gc acme --apply          # limit to one project
+odooctl gc --apply --keep-backups 5 --keep-logs 50
+```
+
+What it cleans, per project:
+
+| Item | Action |
+|---|---|
+| Dangling image layers | `docker image prune` |
+| Build cache | `docker builder prune` (next builds re-download/recompile) |
+| `test_*` databases | DROP database + delete its filestore |
+| Orphan filestores | filestore dirs whose DB no longer exists are deleted |
+| Old backup snapshots | newest `--keep-backups` per db survive (default 3) |
+| Old test logs | newest `--keep-logs` files survive (default 20) |
+| Orphan anonymous volumes | hash-named volumes no container uses anymore (auto-created by postgres/odoo images) |
+| Untracked tagged images | only with `--stale-images`: images no registered project uses (old renamed-project builds). Base images may re-download on a later build |
+
+Live checks (test DBs, orphan filestores) need that project's containers running;
+stopped projects still get host-side cleanup (backups, logs).
+
+### The nuclear option
+
+```bash
+odooctl gc-deep acme
+```
+
+Wipes **all named volumes of one project** - every database and every filestore -
+after a loud confirmation. Bind mounts (addons, config, backups) are untouched.
+Use when a pgdata volume has bloated beyond recovery; afterwards `odooctl up`
+gives you a factory-fresh environment, and `restore` brings your data back.
+
+> **macOS note:** after big cleanups, Docker Desktop's Linux VM keeps the disk
+> space it allocated until restarted (or trimmed automatically on recent
+> versions). Restarting Docker Desktop releases it back to the host.
+> **Layer sharing:** projects created by `init` from the same template share the
+> same image tags and Docker layer cache - a new project costs megabytes, not
+> gigabytes, as long as you don't modify its Dockerfiles differently.
+
+## `remove` - deleting a project
+
+```bash
+odooctl remove newclient                          # stop containers + unregister (files kept)
+odooctl remove newclient --images                 # ...and remove images not shared with other projects
+odooctl remove newclient --purge-folder           # ...and DELETE the whole folder from disk
+```
+
+What happens, in order:
+
+1. Containers are stopped and removed together with their named volumes
+   (`docker compose down -v`).
+2. With `--images`: each project image is removed via `docker rmi` - **unless**
+   another registered project uses the identical image ID (e.g. projects created
+   from the same template); shared images are kept and reported.
+3. With `--purge-folder`: after a separate loud confirmation, the project folder
+   itself is deleted - source code, `data/`, backups, everything. Without this
+   flag your files stay untouched on disk.
+4. The project is unregistered. Re-running `odooctl discover` will no longer see it.
 
 ---
 
@@ -534,6 +799,7 @@ everything is rediscovered on the next `discover`.
 | Config location | `~/.config/odooctl/config.json` | same |
 | Install commands | identical (pipx / uv / venv) | identical |
 | Enterprise path rewrite during `init` | `/Users/<you>` | `/home/<you>` (automatic either way) |
+| Disk reclaim after `gc --apply` | restart Docker Desktop (its VM releases space lazily) | immediate |
 
 Everything else - commands, flags, behaviour, output - is identical on both systems.
 
@@ -566,6 +832,13 @@ your system, bumping upward until free.
 **A restored DB asks for 2FA**
 Shouldn't happen anymore - `reset-admin` disables TOTP on the reset user. If it does,
 run `odooctl reset-admin <project> -d <db>` again.
+
+**Docker takes tons of disk space**
+Run `odooctl df` to see where it goes, then `odooctl gc --apply`. Typical culprits:
+dangling layers from rebuilds, build cache, leftover `test_*` databases and the
+filestores of databases deleted long ago. If a `pgdata` volume itself has grown
+huge (Postgres never shrinks files), use `odooctl gc-deep <project>` after taking
+a backup.
 
 ## Development
 

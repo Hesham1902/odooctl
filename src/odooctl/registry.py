@@ -205,6 +205,17 @@ def normalize_version(value):
     return f"{m.group(1)}.0" if m else None
 
 
+def save_pull_settings(slug, data):
+    """Store pull connection details outside project entries (discover wipes those)."""
+    cfg = load_config()
+    cfg.setdefault("pull", {})[slug] = {k: v for k, v in data.items() if v}
+    save_config(cfg)
+
+
+def load_pull_settings(slug):
+    return (load_config().get("pull") or {}).get(slug) or {}
+
+
 def resolve(name_or_prefix, projects=None):
     projects = projects or get_projects()
     if name_or_prefix in projects:
