@@ -10,14 +10,17 @@ def _register(slug, tmp_path):
     d = tmp_path / slug
     d.mkdir()
     (d / "docker-compose.yml").write_text("services: {}")
-    registry.register(slug, {
-        "compose_file": str(d / "docker-compose.yml"),
-        "path": str(d),
-        "services": {"web": "web", "db": "db"},
-        "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
-        "ports": {"http": 8069},
-        "db_user": "odoo",
-    })
+    registry.register(
+        slug,
+        {
+            "compose_file": str(d / "docker-compose.yml"),
+            "path": str(d),
+            "services": {"web": "web", "db": "db"},
+            "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
+            "ports": {"http": 8069},
+            "db_user": "odoo",
+        },
+    )
     return registry.get_projects()[slug]
 
 
@@ -105,6 +108,7 @@ def test_find_remote_backup_falls_through_and_raises(monkeypatch):
     with pytest.raises(pull.PullError) as exc:
         pull.find_remote_backup("u@h")
     assert "--path" in str(exc.value)
+
     # explicit path is used directly
     def explicit(cmd, **kw):
         if _is_probe(cmd):
@@ -115,7 +119,8 @@ def test_find_remote_backup_falls_through_and_raises(monkeypatch):
 
     monkeypatch.setattr(pull.subprocess, "run", explicit)
     assert pull.find_remote_backup("u@h", path="/tmp") == {
-        "sql_gz": "/tmp/x.sql.gz", "mirror": "/tmp/x",
+        "sql_gz": "/tmp/x.sql.gz",
+        "mirror": "/tmp/x",
     }
 
 
@@ -127,12 +132,12 @@ def test_download_builds_bundle(tmp_path, monkeypatch):
         if cmd[0] == "scp":
             Path(cmd[-1]).write_bytes(b"sqldata")
             return FakeProc()
-        return FakeProc(out=b"no\n")   # no remote data dir -> skip streaming
+        return FakeProc(out=b"no\n")  # no remote data dir -> skip streaming
 
     monkeypatch.setattr(pull.subprocess, "run", fake_run)
-    bundle = pull.download("u@h", 2222,
-                           {"sql_gz": "/backup.daily/acme_20260821.sql.gz", "mirror": None},
-                           tmp_path)
+    bundle = pull.download(
+        "u@h", 2222, {"sql_gz": "/backup.daily/acme_20260821.sql.gz", "mirror": None}, tmp_path
+    )
     assert bundle.name == "acme_20260821"
     assert (bundle / "acme_20260821.sql.gz").read_bytes() == b"sqldata"
     scp_cmd = next(c for c in seen if c[0] == "scp")
@@ -161,9 +166,9 @@ def test_download_streams_filestore_when_present(tmp_path, monkeypatch):
     monkeypatch.setattr(pull.subprocess, "run", fake_run)
     monkeypatch.setattr(pull, "_stream_remote_tar", fake_stream)
 
-    bundle = pull.download("u@h", None,
-                           {"sql_gz": "/b/acme.sql.gz", "mirror": "/b/acme"}, tmp_path,
-                           with_filestore=True)
+    bundle = pull.download(
+        "u@h", None, {"sql_gz": "/b/acme.sql.gz", "mirror": "/b/acme"}, tmp_path, with_filestore=True
+    )
     assert streamed == {"dir": "/b/acme", "sub": "home/odoo/data"}
     assert (bundle / "home" / "odoo" / "data" / "filestore" / "db1" / "blob").exists()
 
@@ -180,15 +185,15 @@ def test_download_skips_filestore_by_default(tmp_path, monkeypatch):
         return FakeProc(out=b"")
 
     monkeypatch.setattr(pull.subprocess, "run", fake_run)
-    monkeypatch.setattr(pull, "_stream_remote_tar",
-                        lambda *a, **kw: pytest.fail("must not stream without --with-filestore"))
+    monkeypatch.setattr(
+        pull, "_stream_remote_tar", lambda *a, **kw: pytest.fail("must not stream without --with-filestore")
+    )
 
     # leftovers from an aborted --with-filestore run must be cleaned
     stale = tmp_path / "acme" / "home" / "odoo" / "data" / "filestore"
     stale.mkdir(parents=True)
 
-    bundle = pull.download("u@h", None,
-                           {"sql_gz": "/b/acme.sql.gz", "mirror": "/b/acme"}, tmp_path)
+    bundle = pull.download("u@h", None, {"sql_gz": "/b/acme.sql.gz", "mirror": "/b/acme"}, tmp_path)
     assert (bundle / "acme.sql.gz").exists()
     assert not (bundle / "home").exists()
 
@@ -213,8 +218,7 @@ def test_download_reuses_cached_sql_gz(tmp_path, monkeypatch):
 
 
 def test_download_failure_raises(tmp_path, monkeypatch):
-    monkeypatch.setattr(pull.subprocess, "run",
-                        lambda cmd, **kw: FakeProc(rc=1, err=b"permission denied"))
+    monkeypatch.setattr(pull.subprocess, "run", lambda cmd, **kw: FakeProc(rc=1, err=b"permission denied"))
     with pytest.raises(pull.PullError) as exc:
         pull.download("u@h", None, {"sql_gz": "/x.sql.gz", "mirror": None}, tmp_path)
     assert "permission denied" in str(exc.value)
@@ -260,10 +264,13 @@ def happy_pull(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.compose, "databases", lambda p, u="odoo": [])
     monkeypatch.setattr(cli.compose, "service_state", lambda p, s: ("running", {}))
     monkeypatch.setattr(
-        cli.pull_mod, "find_remote_backup",
-        lambda t, port=None, path=None, key=None:
-            {"sql_gz": "~/backup.daily/acme_20260821.sql.gz",
-             "mirror": "~/backup.daily/acme_20260821"})
+        cli.pull_mod,
+        "find_remote_backup",
+        lambda t, port=None, path=None, key=None: {
+            "sql_gz": "~/backup.daily/acme_20260821.sql.gz",
+            "mirror": "~/backup.daily/acme_20260821",
+        },
+    )
 
     zips = {}
     lifecycle = []
@@ -277,8 +284,7 @@ def happy_pull(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli.pull_mod, "download", fake_download)
     monkeypatch.setattr(cli.restore_mod, "detect_format", lambda p: "odoosh_raw")
-    monkeypatch.setattr(cli.restore_mod, "target_name",
-                        lambda p, fmt, name: name or "acme_prod")
+    monkeypatch.setattr(cli.restore_mod, "target_name", lambda p, fmt, name: name or "acme_prod")
     monkeypatch.setattr(cli.restore_mod, "_dump_create_target", lambda gz: None)
 
     def fake_restore(path, ent, src, db):
@@ -292,31 +298,29 @@ def happy_pull(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.restore_mod, "restore", fake_restore)
     monkeypatch.setattr(cli.admin, "reset_admin", fake_reset)
     monkeypatch.setattr(cli.compose, "web_running", lambda p, e: True)
-    monkeypatch.setattr(cli.compose, "run",
-                        lambda path, *a, **kw: lifecycle.append(a) or FakeProc())
+    monkeypatch.setattr(cli.compose, "run", lambda path, *a, **kw: lifecycle.append(a) or FakeProc())
     return entry, zips, lifecycle
 
 
 def test_pull_full_flow_downloads_restores_cleans(happy_pull, tmp_path, monkeypatch):
     entry, zips, lifecycle = happy_pull
-    result = CliRunner().invoke(cli.main,
-                                ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh",
-                                 "-d", "acme_prod"])
+    result = CliRunner().invoke(
+        cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh", "-d", "acme_prod"]
+    )
     assert result.exit_code == 0, result.output
     # web stopped before restore, restarted after reset-admin
     assert lifecycle[0] == ("stop", "web")
     assert lifecycle[1] == ("restore", "acme_prod")
     assert lifecycle[2] == "reset_admin"
     assert lifecycle[3] == ("start", "web")
-    assert not zips["local"].exists()          # cleaned up by default
+    assert not zips["local"].exists()  # cleaned up by default
     assert "cleaned up download" in result.output
 
 
 def test_pull_keeps_web_down_when_it_was_down(happy_pull, tmp_path, monkeypatch):
     entry, zips, lifecycle = happy_pull
     monkeypatch.setattr(cli.compose, "web_running", lambda p, e: False)
-    result = CliRunner().invoke(cli.main,
-                                ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh"])
+    result = CliRunner().invoke(cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh"])
     assert result.exit_code == 0, result.output
     assert ("stop", "web") not in lifecycle
     assert ("start", "web") not in lifecycle
@@ -325,16 +329,14 @@ def test_pull_keeps_web_down_when_it_was_down(happy_pull, tmp_path, monkeypatch)
 def test_pull_requires_running_db_container(happy_pull, tmp_path, monkeypatch):
     entry, zips, lifecycle = happy_pull
     monkeypatch.setattr(cli.compose, "service_state", lambda p, s: ("stopped", {}))
-    result = CliRunner().invoke(cli.main,
-                                ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh"])
+    result = CliRunner().invoke(cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh"])
     assert result.exit_code != 0
     assert "db container is not running" in result.output
 
 
 def test_pull_default_db_name_when_none_given(happy_pull, tmp_path, monkeypatch):
     entry, zips, lifecycle = happy_pull
-    result = CliRunner().invoke(cli.main,
-                                ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh"])
+    result = CliRunner().invoke(cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh"])
     assert result.exit_code == 0, result.output
     assert "restoring as 'acme_pulled'" in result.output
     assert lifecycle[1] == ("restore", "acme_pulled")
@@ -350,9 +352,7 @@ def test_pull_confirm_before_download_and_abort(happy_pull, tmp_path, monkeypatc
         raise AssertionError("must not download when aborted")
 
     monkeypatch.setattr(cli.pull_mod, "download", fake_download)
-    result = CliRunner().invoke(cli.main,
-                                ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh"],
-                                input="n\n")
+    result = CliRunner().invoke(cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh"], input="n\n")
     assert result.exit_code != 0
     assert not downloads
 
@@ -360,9 +360,9 @@ def test_pull_confirm_before_download_and_abort(happy_pull, tmp_path, monkeypatc
 def test_pull_yes_flag_skips_confirm(happy_pull, tmp_path, monkeypatch):
     entry, zips, lifecycle = happy_pull
     monkeypatch.setattr(cli.compose, "databases", lambda p, u="odoo": ["acme_prod"])
-    result = CliRunner().invoke(cli.main,
-                                ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh",
-                                 "-d", "acme_prod", "--yes"])
+    result = CliRunner().invoke(
+        cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh", "-d", "acme_prod", "--yes"]
+    )
     assert result.exit_code == 0, result.output
     assert lifecycle[1] == ("restore", "acme_prod")
 
@@ -370,17 +370,51 @@ def test_pull_yes_flag_skips_confirm(happy_pull, tmp_path, monkeypatch):
 def test_pull_reports_source_db_from_dump(happy_pull, tmp_path, monkeypatch):
     entry, zips, lifecycle = happy_pull
     monkeypatch.setattr(cli.restore_mod, "_dump_create_target", lambda gz: "08-10-2026")
-    result = CliRunner().invoke(cli.main,
-                                ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh",
-                                 "-d", "acme_prod"])
+    result = CliRunner().invoke(
+        cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh", "-d", "acme_prod"]
+    )
     assert result.exit_code == 0, result.output
     assert "source database in dump: '08-10-2026' -> will become 'acme_prod'" in result.output
 
 
+def test_pull_without_filestore_repairs_icons(happy_pull, tmp_path, monkeypatch):
+    entry, zips, lifecycle = happy_pull
+
+    def fake_restore(path, ent, src, db):
+        lifecycle.append(("restore", db))
+        return {"filestore": False}
+
+    monkeypatch.setattr(cli.restore_mod, "restore", fake_restore)
+    icon_calls = []
+    monkeypatch.setattr(
+        cli.icons_mod,
+        "fix_icons",
+        lambda path, ent, db: icon_calls.append(db) or {"checked": 45, "fixed": 4, "unrepairable": 0},
+    )
+
+    result = CliRunner().invoke(
+        cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh", "-d", "acme_prod"]
+    )
+    assert result.exit_code == 0, result.output
+    assert icon_calls == ["acme_prod"]
+    assert "re-importing menu icons" in result.output
+    assert "re-imported 4" in result.output
+
+
+def test_pull_with_filestore_skips_icon_repair(happy_pull, tmp_path, monkeypatch):
+    entry, zips, lifecycle = happy_pull
+    icon_calls = []
+    monkeypatch.setattr(cli.icons_mod, "fix_icons", lambda *a: icon_calls.append(1))
+    result = CliRunner().invoke(
+        cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh", "-d", "acme_prod"]
+    )
+    assert result.exit_code == 0, result.output
+    assert not icon_calls
+
+
 def test_pull_keep_download_flag(happy_pull, tmp_path, monkeypatch):
     entry, zips, lifecycle = happy_pull
-    result = CliRunner().invoke(
-        cli.main, ["pull", "acme", "--from", "acme@acme.odoo.sh", "--keep-download"])
+    result = CliRunner().invoke(cli.main, ["pull", "acme", "--from", "acme@acme.odoo.sh", "--keep-download"])
     assert result.exit_code == 0, result.output
     assert zips["local"].exists()
     assert "bundle kept at" in result.output
@@ -419,20 +453,28 @@ def test_pull_save_then_plain_reuse(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.pull_mod, "find_remote_backup", fake_find)
     monkeypatch.setattr(cli.pull_mod, "download", fake_download)
     monkeypatch.setattr(cli.restore_mod, "detect_format", lambda p: "odoosh_raw")
-    monkeypatch.setattr(cli.restore_mod, "target_name",
-                        lambda p, fmt, name: name or "acme_prod")
-    monkeypatch.setattr(cli.restore_mod, "restore",
-                        lambda path, ent, src, db: {"filestore": False})
-    monkeypatch.setattr(cli.admin, "reset_admin",
-                        lambda path, ent, db: {"id": 2, "old_login": "x"})
+    monkeypatch.setattr(cli.restore_mod, "target_name", lambda p, fmt, name: name or "acme_prod")
+    monkeypatch.setattr(cli.restore_mod, "restore", lambda path, ent, src, db: {"filestore": False})
+    monkeypatch.setattr(cli.admin, "reset_admin", lambda path, ent, db: {"id": 2, "old_login": "x"})
     # --key needs an existing file
     key_file = tmp_path / "k_ed25519"
     key_file.write_text("PRIVATE KEY")
 
     # 1st run: full flags + --save
-    r1 = CliRunner().invoke(cli.main, [
-        "pull", "acme", "--from", "ssh://1234567@acme.odoo.com",
-        "--key", str(key_file), "-d", "acme_prod", "--save"])
+    r1 = CliRunner().invoke(
+        cli.main,
+        [
+            "pull",
+            "acme",
+            "--from",
+            "ssh://1234567@acme.odoo.com",
+            "--key",
+            str(key_file),
+            "-d",
+            "acme_prod",
+            "--save",
+        ],
+    )
     assert r1.exit_code == 0, r1.output
     assert "saved pull settings" in r1.output
     saved = registry.load_pull_settings("acme")

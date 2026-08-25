@@ -26,9 +26,7 @@ def test_parse_compose_extracts_everything(tmp_path):
 def test_parse_compose_rejects_non_odoo(tmp_path):
     d = tmp_path / "webapp"
     d.mkdir()
-    (d / "docker-compose.yml").write_text(
-        "services:\n  app:\n    image: nginx\n    ports: ['80:80']\n"
-    )
+    (d / "docker-compose.yml").write_text("services:\n  app:\n    image: nginx\n    ports: ['80:80']\n")
     assert parse_compose(d / "docker-compose.yml") is None
 
 

@@ -4,8 +4,12 @@ import time
 from pathlib import Path
 
 ODOO_SH_BACKUP_DIRS = [
-    "~/backup.daily", "~/backup.weekly", "~/backup.monthly",
-    "/backup.daily", "/backup.weekly", "/backup.monthly",
+    "~/backup.daily",
+    "~/backup.weekly",
+    "~/backup.monthly",
+    "/backup.daily",
+    "/backup.weekly",
+    "/backup.monthly",
 ]
 
 
@@ -37,8 +41,7 @@ class _ProgressPipe:
             if now - self._last_render > 0.2:
                 self._last_render = now
                 rate = self.total / max(now - self._start, 1e-9) / 1e6
-                print(f"\r{self.label}: {_fmt_mb(self.total)} ({rate:.1f} MB/s)   ",
-                      end="", flush=True)
+                print(f"\r{self.label}: {_fmt_mb(self.total)} ({rate:.1f} MB/s)   ", end="", flush=True)
         print(f"\r{self.label}: {_fmt_mb(self.total)} done" + " " * 20, flush=True)
 
 
@@ -46,7 +49,7 @@ def parse_target(spec):
     """'ssh://user@host:2222' / 'user@host' -> (target, port|None)."""
     spec = spec.strip()
     if spec.startswith("ssh://"):
-        spec = spec[len("ssh://"):]
+        spec = spec[len("ssh://") :]
     port = None
     hostpart = spec.rsplit("@", 1)[-1]
     if ":" in hostpart:
@@ -61,8 +64,16 @@ def parse_target(spec):
 
 
 def _ssh_cmd(target, port, remote_command, key=None):
-    args = ["ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=accept-new"]
+    args = [
+        "ssh",
+        "-n",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+    ]
     if key:
         args += ["-i", str(key), "-o", "IdentitiesOnly=yes"]
     if port:
@@ -71,8 +82,7 @@ def _ssh_cmd(target, port, remote_command, key=None):
 
 
 def _scp_cmd(target, port, remote_path, local_path, key=None, legacy=False):
-    args = ["scp", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
-            "-o", "StrictHostKeyChecking=accept-new"]
+    args = ["scp", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"]
     if legacy:
         # OpenSSH >= 9 speaks SFTP by default; odoo.sh offers no sftp subsystem
         args += ["-O"]
@@ -117,7 +127,7 @@ def find_remote_backup(target, port=None, path=None, key=None):
         first = proc.stdout.decode(errors="replace").strip().splitlines()
         if proc.returncode == 0 and first and first[0].strip():
             sql_gz = first[0].strip()
-            mirror = sql_gz[:-len(".sql.gz")] if sql_gz.endswith(".sql.gz") else None
+            mirror = sql_gz[: -len(".sql.gz")] if sql_gz.endswith(".sql.gz") else None
             if mirror:
                 chk = subprocess.run(
                     _ssh_cmd(target, port, f"[ -d '{mirror}' ] && echo yes || echo no", key=key),
@@ -133,8 +143,7 @@ def find_remote_backup(target, port=None, path=None, key=None):
     )
 
 
-def _stream_remote_tar(target, port, remote_dir, remote_sub, dest: Path, key=None,
-                       progress=True):
+def _stream_remote_tar(target, port, remote_dir, remote_sub, dest: Path, key=None, progress=True):
     """ssh 'tar -C <dir> -czf - <sub>' piped into a local tar extraction."""
     src = subprocess.Popen(
         _ssh_cmd(target, port, f"tar -C {remote_dir} -czf - {remote_sub}", key=key),
@@ -165,8 +174,7 @@ def _stream_remote_tar(target, port, remote_dir, remote_sub, dest: Path, key=Non
     dst_rc = dst.wait()
     src_rc = src.wait()
     if dst_rc != 0 or src_rc != 0:
-        raise PullError(f"Streaming '{remote_sub}' from remote failed "
-                        f"(ssh rc={src_rc}, tar rc={dst_rc}).")
+        raise PullError(f"Streaming '{remote_sub}' from remote failed (ssh rc={src_rc}, tar rc={dst_rc}).")
 
 
 def remote_dir_size(target, port, path, key=None):
@@ -191,7 +199,7 @@ def download(target, port, remote, dest_dir, key=None, with_filestore=False):
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     name = Path(remote["sql_gz"]).name
-    base = name[:-len(".sql.gz")] if name.endswith(".sql.gz") else Path(name).stem
+    base = name[: -len(".sql.gz")] if name.endswith(".sql.gz") else Path(name).stem
     bundle = dest_dir / base
     bundle.mkdir(parents=True, exist_ok=True)
 
@@ -200,11 +208,12 @@ def download(target, port, remote, dest_dir, key=None, with_filestore=False):
         print(f"reusing cached {name} ({_fmt_mb(local_sql.stat().st_size)})")
     else:
         proc = subprocess.run(
-            _scp_cmd(target, port, remote["sql_gz"], local_sql, key=key), capture_output=True)
+            _scp_cmd(target, port, remote["sql_gz"], local_sql, key=key), capture_output=True
+        )
         if proc.returncode != 0 and b"subsystem request failed" in (proc.stderr or b""):
             proc = subprocess.run(
-                _scp_cmd(target, port, remote["sql_gz"], local_sql, key=key, legacy=True),
-                capture_output=True)
+                _scp_cmd(target, port, remote["sql_gz"], local_sql, key=key, legacy=True), capture_output=True
+            )
         if proc.returncode != 0:
             err = (proc.stderr or b"").decode(errors="replace").strip()
             raise PullError(f"Download failed: {err}")

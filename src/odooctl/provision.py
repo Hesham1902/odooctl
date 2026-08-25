@@ -67,7 +67,7 @@ def rewrite_compose(data, slug, version, alloc):
         svc.pop("image", None)
         svc["container_name"] = f"{slug}_{role}"
         new_ports = []
-        for mapping in (svc.get("ports") or []):
+        for mapping in svc.get("ports") or []:
             host, _, container = str(mapping).rpartition(":")
             try:
                 preferred = int(host.split(":")[-1])
@@ -77,7 +77,7 @@ def rewrite_compose(data, slug, version, alloc):
         if new_ports:
             svc["ports"] = new_ports
         volumes = []
-        for vol in (svc.get("volumes") or []):
+        for vol in svc.get("volumes") or []:
             if isinstance(vol, str) and "/_odoo_addons/" in vol:
                 left, _, right = vol.partition(":")
                 left = re.sub(r"^/(home|Users)/[^/]+", HOME_PREFIX, left)
@@ -114,13 +114,13 @@ def pick_template(projects, version, template_slug):
 
     if template_slug:
         if template_slug not in projects:
-            raise RuntimeError(f"Unknown template '{template_slug}'. Registered: {', '.join(sorted(projects))}")
+            raise RuntimeError(
+                f"Unknown template '{template_slug}'. Registered: {', '.join(sorted(projects))}"
+            )
         return template_slug, projects[template_slug]
     if not version:
         raise RuntimeError("Need --version or --template.")
-    candidates = sorted(
-        (s, e) for s, e in projects.items() if registry.detect_version(e) == version
-    )
+    candidates = sorted((s, e) for s, e in projects.items() if registry.detect_version(e) == version)
     if not candidates:
         known = {s: registry.detect_version(e) for s, e in projects.items()}
         raise RuntimeError(f"No registered project on Odoo {version}. Known: {known}")

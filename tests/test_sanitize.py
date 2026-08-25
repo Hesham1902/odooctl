@@ -8,14 +8,17 @@ from odooctl import cli, registry, sanitize
 def _register(slug, tmp_path):
     d = tmp_path / slug
     d.mkdir()
-    registry.register(slug, {
-        "compose_file": str(d / "docker-compose.yml"),
-        "path": str(d),
-        "services": {"web": "web", "db": "db"},
-        "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
-        "ports": {"http": 8069},
-        "db_user": "odoo",
-    })
+    registry.register(
+        slug,
+        {
+            "compose_file": str(d / "docker-compose.yml"),
+            "path": str(d),
+            "services": {"web": "web", "db": "db"},
+            "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
+            "ports": {"http": 8069},
+            "db_user": "odoo",
+        },
+    )
     return registry.get_projects()[slug]
 
 
@@ -82,8 +85,7 @@ def test_sanitize_runs_shell_with_script(tmp_path, monkeypatch):
 def test_sanitize_cli_prints_counts(tmp_path, monkeypatch):
     _register("acme", tmp_path)
     monkeypatch.setattr(cli.compose, "daemon_available", lambda: True)
-    monkeypatch.setattr(cli.sanitize_mod, "sanitize",
-                        lambda *a, **kw: dict(COUNTS))
+    monkeypatch.setattr(cli.sanitize_mod, "sanitize", lambda *a, **kw: dict(COUNTS))
     result = CliRunner().invoke(cli.main, ["sanitize", "acme", "-d", "prod"])
     assert result.exit_code == 0, result.output
     assert "12" in result.output and "scheduled actions paused" in result.output

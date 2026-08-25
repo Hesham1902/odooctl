@@ -55,9 +55,13 @@ def _untar_into_filestore(project_path, entry, db, tar_path, archive_contains_db
     sub = f"/var/lib/odoo/filestore/{db}" if not archive_contains_db_dir else "/var/lib/odoo/filestore"
     with open(tar_path, "rb") as fh:
         compose.exec_service(
-            project_path, entry["services"]["web"], "sh", "-c",
+            project_path,
+            entry["services"]["web"],
+            "sh",
+            "-c",
             f"mkdir -p {sub} && tar xzf - -C {sub}",
-            capture=False, stdin_file=fh,
+            capture=False,
+            stdin_file=fh,
         )
 
 
@@ -96,7 +100,13 @@ def _quote_ident(name):
 def _terminate_backends(project_path, entry, db):
     user = entry.get("db_user", "odoo")
     compose.exec_service(
-        project_path, entry["services"]["db"], "psql", "-U", user, "-d", "postgres",
+        project_path,
+        entry["services"]["db"],
+        "psql",
+        "-U",
+        user,
+        "-d",
+        "postgres",
         "-c",
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
         f"WHERE datname = '{db}' AND pid <> pg_backend_pid()",
@@ -105,16 +115,23 @@ def _terminate_backends(project_path, entry, db):
 
 
 _EXT_LINE_RE = re.compile(
-    r'^(CREATE EXTENSION(?: IF NOT EXISTS)?|COMMENT ON EXTENSION)\s+"?([a-zA-Z0-9_]+)"?')
+    r'^(CREATE EXTENSION(?: IF NOT EXISTS)?|COMMENT ON EXTENSION)\s+"?([a-zA-Z0-9_]+)"?'
+)
 
 
 def _available_extensions(project_path, entry):
     """Extensions installable in the local postgres (None = unknown, don't filter)."""
     try:
         proc = compose.exec_service(
-            project_path, entry["services"]["db"], "psql",
-            "-U", entry.get("db_user", "odoo"), "-d", "postgres",
-            "-Atc", "SELECT name FROM pg_available_extensions",
+            project_path,
+            entry["services"]["db"],
+            "psql",
+            "-U",
+            entry.get("db_user", "odoo"),
+            "-d",
+            "postgres",
+            "-Atc",
+            "SELECT name FROM pg_available_extensions",
         )
         return set(proc.stdout.decode().split())
     except compose.DockerError:
@@ -154,16 +171,32 @@ def restore(project_path, entry, src: Path, db):
     if fmt == "dump":
         with open(src, "rb") as fh:
             compose.exec_service(
-                project_path, db_svc, "pg_restore", "-U", user, "--no-owner", "-d", db,
-                capture=False, stdin_file=fh,
+                project_path,
+                db_svc,
+                "pg_restore",
+                "-U",
+                user,
+                "--no-owner",
+                "-d",
+                db,
+                capture=False,
+                stdin_file=fh,
             )
         return {"db": db, "filestore": False, "format": fmt}
 
     if fmt == "odooctl_dir":
         with open(src / "db.dump", "rb") as fh:
             compose.exec_service(
-                project_path, db_svc, "pg_restore", "-U", user, "--no-owner", "-d", db,
-                capture=False, stdin_file=fh,
+                project_path,
+                db_svc,
+                "pg_restore",
+                "-U",
+                user,
+                "--no-owner",
+                "-d",
+                db,
+                capture=False,
+                stdin_file=fh,
             )
         fs = src / "filestore.tar.gz"
         if fs.exists():
@@ -186,24 +219,33 @@ def restore(project_path, entry, src: Path, db):
         available = _available_extensions(project_path, entry)
         compose.run_with_stdin_stream(
             project_path,
-            ["exec", "-T", db_svc, "psql", "-U", user, "-d", replay_into,
-             "-v", "ON_ERROR_STOP=1"],
+            ["exec", "-T", db_svc, "psql", "-U", user, "-d", replay_into, "-v", "ON_ERROR_STOP=1"],
             _sql_chunks(gz, available=available, skipped=skipped_ext),
         )
         if dump_db and dump_db != db:
             _terminate_backends(project_path, entry, dump_db)
             compose.exec_service(
-                project_path, db_svc, "psql", "-U", user, "-d", "postgres",
-                "-c", f"ALTER DATABASE {_quote_ident(dump_db)} RENAME TO {_quote_ident(db)}",
+                project_path,
+                db_svc,
+                "psql",
+                "-U",
+                user,
+                "-d",
+                "postgres",
+                "-c",
+                f"ALTER DATABASE {_quote_ident(dump_db)} RENAME TO {_quote_ident(db)}",
             )
         fs_dir = next((d for d in src.rglob("filestore") if d.is_dir()), None)
         has_fs = fs_dir and any(fs_dir.iterdir())
         if has_fs:
             tar_path = _zip_filestore_to_tar(fs_dir)
-            _untar_into_filestore(project_path, entry, db, tar_path,
-                                  archive_contains_db_dir=False)
-        return {"db": db, "filestore": bool(has_fs), "format": fmt,
-                "skipped_extensions": sorted(set(skipped_ext))}
+            _untar_into_filestore(project_path, entry, db, tar_path, archive_contains_db_dir=False)
+        return {
+            "db": db,
+            "filestore": bool(has_fs),
+            "format": fmt,
+            "skipped_extensions": sorted(set(skipped_ext)),
+        }
 
     tmp = Path(tempfile.mkdtemp(prefix="odooctl_restore_"))
     with zipfile.ZipFile(src) as zf:
@@ -216,9 +258,17 @@ def restore(project_path, entry, src: Path, db):
 
     with open(dump_sql, "rb") as fh:
         compose.exec_service(
-            project_path, db_svc, "psql", "-U", user, "-d", db,
-            "-v", "ON_ERROR_STOP=1",
-            capture=False, stdin_file=fh,
+            project_path,
+            db_svc,
+            "psql",
+            "-U",
+            user,
+            "-d",
+            db,
+            "-v",
+            "ON_ERROR_STOP=1",
+            capture=False,
+            stdin_file=fh,
         )
 
     fs_dir = next((d for d in tmp.rglob("filestore") if d.is_dir()), None)

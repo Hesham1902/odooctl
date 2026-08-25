@@ -7,14 +7,17 @@ from odooctl.dbdiff import compare, parse_module_states
 def _register(slug, tmp_path):
     d = tmp_path / slug
     d.mkdir()
-    registry.register(slug, {
-        "compose_file": str(d / "docker-compose.yml"),
-        "path": str(d),
-        "services": {"web": "web", "db": "db"},
-        "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
-        "ports": {"http": 8069},
-        "db_user": "odoo",
-    })
+    registry.register(
+        slug,
+        {
+            "compose_file": str(d / "docker-compose.yml"),
+            "path": str(d),
+            "services": {"web": "web", "db": "db"},
+            "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
+            "ports": {"http": 8069},
+            "db_user": "odoo",
+        },
+    )
     return registry.get_projects()[slug]
 
 

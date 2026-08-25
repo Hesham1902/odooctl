@@ -25,11 +25,15 @@ def odoo_command(module, db, test_tags=None):
     tags = test_tags or f"/{module}"
     return [
         "odoo",
-        "-c", "/etc/odoo/odoo.conf",
-        "-d", db,
-        "-i", module,
+        "-c",
+        "/etc/odoo/odoo.conf",
+        "-d",
+        db,
+        "-i",
+        module,
         "--test-enable",
-        "--test-tags", tags,
+        "--test-tags",
+        tags,
         "--stop-after-init",
     ]
 
@@ -37,17 +41,30 @@ def odoo_command(module, db, test_tags=None):
 def drop_db_if_exists(project_path, entry, db):
     user = entry.get("db_user", "odoo")
     compose.exec_service(
-        project_path, "db", "psql", "-U", user, "-d", "postgres",
-        "-c", f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{db}' AND pid <> pg_backend_pid()",
+        project_path,
+        "db",
+        "psql",
+        "-U",
+        user,
+        "-d",
+        "postgres",
+        "-c",
+        f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '{db}' AND pid <> pg_backend_pid()",
     )
-    compose.exec_service(project_path, "db", "psql", "-U", user, "-d", "postgres",
-                         "-c", f'DROP DATABASE IF EXISTS "{db}"')
+    compose.exec_service(
+        project_path, "db", "psql", "-U", user, "-d", "postgres", "-c", f'DROP DATABASE IF EXISTS "{db}"'
+    )
 
 
 def drop_filestore(project_path, entry, db):
     web = entry["services"]["web"]
     compose.exec_service(
-        project_path, web, "rm", "-rf", f"{FILESTORE_DIR}/{db}", check=False,
+        project_path,
+        web,
+        "rm",
+        "-rf",
+        f"{FILESTORE_DIR}/{db}",
+        check=False,
     )
 
 
@@ -70,27 +87,30 @@ def analyze(text, returncode):
         groups = ran_match.groups()
         ran = int(groups[0] or groups[1])
 
-    summary_failed = summary is not None and (
-        int(summary.group(1)) > 0 or int(summary.group(2) or 0) > 0
-    )
+    summary_failed = summary is not None and (int(summary.group(1)) > 0 or int(summary.group(2) or 0) > 0)
     ok = returncode == 0 and not failures and not summary_failed
 
     tail_lines = [line for line in text.splitlines() if line.strip()][-15:]
-    return TestResult(ok=ok, ran=ran, failures=failures, log_path=None,
-                      raw_tail="\n".join(tail_lines))
+    return TestResult(ok=ok, ran=ran, failures=failures, log_path=None, raw_tail="\n".join(tail_lines))
 
 
 def run_tests(project_path, entry, module, db, test_tags=None, keep_db=False, timeout=None):
     web = entry["services"]["web"]
     result = compose.run(
         project_path,
-        "run", "--rm", web,
+        "run",
+        "--rm",
+        web,
         *odoo_command(module, db, test_tags),
         capture=True,
         check=False,
         timeout=timeout,
     )
-    text = (result.stdout or b"").decode(errors="replace") + "\n" + (result.stderr or b"").decode(errors="replace")
+    text = (
+        (result.stdout or b"").decode(errors="replace")
+        + "\n"
+        + (result.stderr or b"").decode(errors="replace")
+    )
 
     analysis = analyze(text, result.returncode)
 

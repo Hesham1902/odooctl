@@ -8,8 +8,18 @@ def list_candidate_users(project_path, entry, db):
         "WHERE COALESCE(u.share, false) IS NOT TRUE ORDER BY u.id LIMIT 10"
     )
     proc = compose.exec_service(
-        project_path, entry["services"]["db"],
-        "psql", "-U", entry.get("db_user", "odoo"), "-d", db, "-At", "-F", "|", "-c", sql,
+        project_path,
+        entry["services"]["db"],
+        "psql",
+        "-U",
+        entry.get("db_user", "odoo"),
+        "-d",
+        db,
+        "-At",
+        "-F",
+        "|",
+        "-c",
+        sql,
         check=False,
     )
     rows = []
@@ -50,8 +60,17 @@ def reset_admin(project_path, entry, db, login="admin", password="admin", user_i
     )
     proc = compose.run(
         project_path,
-        "run", "--rm", "-T", entry["services"]["web"],
-        "odoo", "shell", "-c", "/etc/odoo/odoo.conf", "-d", db, "--no-http",
+        "run",
+        "--rm",
+        "-T",
+        entry["services"]["web"],
+        "odoo",
+        "shell",
+        "-c",
+        "/etc/odoo/odoo.conf",
+        "-d",
+        db,
+        "--no-http",
         input_bytes=script.encode(),
         check=False,
     )

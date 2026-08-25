@@ -11,11 +11,15 @@ def isolated_config(tmp_path, monkeypatch):
     yield home
 
 
-def write_compose(project_dir, version="18", host_prefix="/Users/dev",
-                  web_ports=(("8056", "8069"), ("8072", "8072"), ("8777", "8888")),
-                  db_ports=(("5456", "5432"),),
-                  containers=("acme_web", "acme_db"),
-                  include_enterprise=True):
+def write_compose(
+    project_dir,
+    version="18",
+    host_prefix="/Users/dev",
+    web_ports=(("8056", "8069"), ("8072", "8072"), ("8777", "8888")),
+    db_ports=(("5456", "5432"),),
+    containers=("acme_web", "acme_db"),
+    include_enterprise=True,
+):
     volumes = [
         "./home/odoo/.local/share/Odoo:/var/lib/odoo",
         "./config:/etc/odoo",
@@ -59,6 +63,7 @@ def make_project(tmp_path):
         write_compose(d, **kwargs)
         (d / "custom_addons").mkdir(exist_ok=True)
         return d
+
     return _make
 
 

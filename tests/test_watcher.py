@@ -10,15 +10,18 @@ def _register(slug, tmp_path):
     d.mkdir()
     addons = d / "custom_addons"
     addons.mkdir()
-    registry.register(slug, {
-        "compose_file": str(d / "docker-compose.yml"),
-        "path": str(d),
-        "services": {"web": "web", "db": "db"},
-        "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
-        "ports": {"http": 8069},
-        "custom_addons": str(addons),
-        "db_user": "odoo",
-    })
+    registry.register(
+        slug,
+        {
+            "compose_file": str(d / "docker-compose.yml"),
+            "path": str(d),
+            "services": {"web": "web", "db": "db"},
+            "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
+            "ports": {"http": 8069},
+            "custom_addons": str(addons),
+            "db_user": "odoo",
+        },
+    )
     return registry.get_projects()[slug]
 
 
@@ -35,7 +38,7 @@ def test_snapshot_matches_extension_and_ignores_others(tmp_path):
 
 def test_diff_files_reports_all_kinds(tmp_path):
     old = {"a.py": 1, "b.py": 1}
-    new = {"a.py": 2, "c.py": 1}          # modified + created; b.py deleted
+    new = {"a.py": 2, "c.py": 1}  # modified + created; b.py deleted
     assert watcher.diff_files(old, new) == ["a.py", "b.py", "c.py"]
 
 
@@ -55,14 +58,20 @@ def test_watch_restarts_on_change(tmp_path, monkeypatch):
     def flaky_snapshot(root, exts=("py",)):
         state["n"] += 1
         if state["n"] == 2:
-            f.write_text("v2")   # edit between baseline and first poll
+            f.write_text("v2")  # edit between baseline and first poll
         return real_snapshot(root, exts)
 
     monkeypatch.setattr(watcher, "snapshot", flaky_snapshot)
 
-    watcher.watch(tmp_path, exts={"py"}, interval=0, debounce=0,
-                  echo=echoes.append, restart=lambda: restarts.append(1),
-                  max_cycles=1)
+    watcher.watch(
+        tmp_path,
+        exts={"py"},
+        interval=0,
+        debounce=0,
+        echo=echoes.append,
+        restart=lambda: restarts.append(1),
+        max_cycles=1,
+    )
 
     assert len(restarts) == 1
     assert any("change detected" in e and "m.py" in e for e in echoes)

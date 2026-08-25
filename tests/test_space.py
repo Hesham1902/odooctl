@@ -31,13 +31,15 @@ def test_parse_system_df_handles_legacy_keys():
     text = '{"Type":"Images","Total":3,"Active":1,"Size":"1GB","Reclaimable":"500MB (50%)"}'
     totals = space.parse_system_df(text)
     assert totals["images"] == {
-        "total": 3, "active": 1,
-        "size_bytes": 1_000_000_000, "reclaim_bytes": 500_000_000,
+        "total": 3,
+        "active": 1,
+        "size_bytes": 1_000_000_000,
+        "reclaim_bytes": 500_000_000,
     }
 
 
 def test_parse_system_df_garbage_lines_skipped():
-    totals = space.parse_system_df("not json\n\n{\"Type\":\"Images\",\"Size\":\"5B\"}\n")
+    totals = space.parse_system_df('not json\n\n{"Type":"Images","Size":"5B"}\n')
     assert totals["images"]["size_bytes"] == 5
     assert len(totals) == 1
 
@@ -215,8 +217,8 @@ def test_filter_untracked_keeps_only_unused_tagged():
     images = [
         {"id": "used", "tag": "acme-web", "size_bytes": 1},
         {"id": "free1", "tag": "odoo:16", "size_bytes": 10},
-        {"id": "free2", "tag": None, "size_bytes": 20},      # untagged -> skip
-        {"id": None, "tag": "weird", "size_bytes": 30},      # no id -> skip
+        {"id": "free2", "tag": None, "size_bytes": 20},  # untagged -> skip
+        {"id": None, "tag": "weird", "size_bytes": 30},  # no id -> skip
         {"id": "free3", "tag": "old:1", "size_bytes": 40},
         {"id": "free3", "tag": "old:also", "size_bytes": 40},  # same id dedupe
     ]
@@ -236,10 +238,14 @@ def test_filter_untracked_matches_short_and_long_ids():
 
 
 def test_anonymous_volume_orphans_filters_hash_names(monkeypatch):
-    monkeypatch.setattr(space, "_docker", lambda *a, **kw: (
-        '{"Name":"2a6c2b8ba58882d6e121ee0dad1b75e92e882f580c6addc1543eb1d215832e15","Driver":"local"}\n'
-        '{"Name":"cladex_pgdata","Driver":"local"}\n'
-    ).encode())
+    monkeypatch.setattr(
+        space,
+        "_docker",
+        lambda *a, **kw: (
+            '{"Name":"2a6c2b8ba58882d6e121ee0dad1b75e92e882f580c6addc1543eb1d215832e15","Driver":"local"}\n'
+            '{"Name":"cladex_pgdata","Driver":"local"}\n'
+        ).encode(),
+    )
     sizes = {
         "2a6c2b8ba58882d6e121ee0dad1b75e92e882f580c6addc1543eb1d215832e15": 845_500_000,
         "cladex_pgdata": 178_900_000,
@@ -253,8 +259,7 @@ def test_anonymous_volume_orphans_filters_hash_names(monkeypatch):
 
 def test_execute_runs_rmi_and_images_before_builder(monkeypatch):
     order = []
-    monkeypatch.setattr(space, "_docker",
-                        lambda *a: order.append(a[0] if a[0] != "rmi" else "rmi"))
+    monkeypatch.setattr(space, "_docker", lambda *a: order.append(a[0] if a[0] != "rmi" else "rmi"))
     items = [
         space.GCItem(kind="builder", description="cache", target="x"),
         space.GCItem(kind="rmi", description="old image", target="imgid"),

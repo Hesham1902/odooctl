@@ -83,10 +83,7 @@ def parse_compose(compose_path: Path):
             or "postgis" in blob
             or str(svc.get("build", {}).get("dockerfile", "")).lower().find("postgres") >= 0
         )
-        looks_web = any(
-            marker in blob
-            for marker in ("odoo", "/mnt/extra-addons", "debugpy")
-        )
+        looks_web = any(marker in blob for marker in ("odoo", "/mnt/extra-addons", "debugpy"))
         if is_db and svc.get("depends_on") is None:
             db = name if db is None else db
         elif looks_web and "postgres" not in blob:
@@ -105,7 +102,9 @@ def parse_compose(compose_path: Path):
         return None
     web_svc = services[web]
     db_svc = services[db]
-    env = {e.split("=", 1)[0]: e.split("=", 1)[-1] for e in (db_svc.get("environment") or []) if "=" in str(e)}
+    env = {
+        e.split("=", 1)[0]: e.split("=", 1)[-1] for e in (db_svc.get("environment") or []) if "=" in str(e)
+    }
     entry = {
         "compose_file": str(compose_path),
         "path": str(compose_path.parent),
@@ -114,9 +113,7 @@ def parse_compose(compose_path: Path):
             "web": web_svc.get("container_name"),
             "db": db_svc.get("container_name"),
         },
-        "ports": _extract_ports(web_svc) | {
-            f"pg_{k}": v for k, v in _extract_ports(db_svc).items()
-        },
+        "ports": _extract_ports(web_svc) | {f"pg_{k}": v for k, v in _extract_ports(db_svc).items()},
         "db_user": env.get("POSTGRES_USER", "odoo"),
         "images": {
             "web": web_svc.get("image"),

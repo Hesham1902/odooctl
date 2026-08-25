@@ -27,7 +27,7 @@ Works on **macOS** and **Linux**.
 
 5. [`status` - see everything at a glance](#status---see-everything-at-a-glance)
 6. [`up` / `down` / `restart` - lifecycle management](#up--down--restart---lifecycle-management)
-7. [`logs` and `url` - following output, opening the app](#logs-and-url---following-output-opening-the-app)
+7. [`logs` and `open` - following output, opening the app](#logs-and-open---following-output-opening-the-app)
 8. [`dev` - auto-restart on code changes](#dev---auto-restart-on-code-changes)
 9. [`diff` - compare module state between databases](#diff---compare-module-state-between-databases)
 10. [`deps` - dependency tree of an addon](#deps---dependency-tree-of-an-addon)
@@ -38,21 +38,22 @@ Works on **macOS** and **Linux**.
 15. [`backup` - snapshotting a database](#backup---snapshotting-a-database)
 16. [`restore` - restoring backups (incl. Odoo.sh zips)](#restore---restoring-backups-incl-odoosh-zips)
 17. [`sanitize` - make a restored prod DB safe](#sanitize---make-a-restored-prod-db-safe)
-18. [`pull` - latest backup over SSH, restored, in one command](#pull---latest-backup-over-ssh-restored-in-one-command)
-19. [`reset-admin` - regaining admin access](#reset-admin---regaining-admin-access)
-20. [`reset` - wiping a database](#reset---wiping-a-database)
-21. [`init` - bootstrapping a new project](#init---bootstrapping-a-new-project)
-22. [`test` - running addon tests in isolation](#test---running-addon-tests-in-isolation)
-23. [`df` - where your disk space went](#df---where-your-disk-space-went)
-24. [`gc` - reclaiming wasted space](#gc---reclaiming-wasted-space)
-25. [`remove` - deleting a project](#remove---deleting-a-project)
+18. [`fix-icons` - bring missing menu icons back](#fix-icons---bring-missing-menu-icons-back)
+19. [`pull` - latest backup over SSH, restored, in one command](#pull---latest-backup-over-ssh-restored-in-one-command)
+20. [`reset-admin` - regaining admin access](#reset-admin---regaining-admin-access)
+21. [`reset` - wiping a database](#reset---wiping-a-database)
+22. [`init` - bootstrapping a new project](#init---bootstrapping-a-new-project)
+23. [`test` - running addon tests in isolation](#test---running-addon-tests-in-isolation)
+24. [`space` - where your disk space went](#space---where-your-disk-space-went)
+25. [`gc` - reclaiming wasted space](#gc---reclaiming-wasted-space)
+26. [`remove` - deleting a project](#remove---deleting-a-project)
 
 **Reference**
 
-26. [Configuration file reference](#configuration-file-reference)
-27. [macOS vs Linux notes](#macos-vs-linux-notes)
-28. [Troubleshooting](#troubleshooting)
-29. [Development](#development)
+27. [Configuration file reference](#configuration-file-reference)
+28. [macOS vs Linux notes](#macos-vs-linux-notes)
+29. [Troubleshooting](#troubleshooting)
+30. [Development](#development)
 
 ---
 
@@ -175,31 +176,43 @@ error listing them.
 
 # Command reference
 
-| Command | Purpose |
-|---|---|
-| `discover` | (Re)scan folders for Odoo projects |
-| `projects` | List registered projects |
-| `status` | Containers + databases, all projects or one |
-| `up` | Start a project's containers |
-| `down` | Stop a project's containers |
-| `restart` | Restart one service |
-| `logs` | Show / stream logs (`--errors`: only errors + tracebacks) |
-| `dev` | Watch `custom_addons` and restart web on `.py` changes |
-| `url` | Open the project in a browser |
-| `psql` | Interactive SQL session |
-| `shell` | Interactive `odoo shell` session |
-| `addons` | List custom addons (+ install state) |
-| `deps` | Dependency tree, reverse deps, cycle detection |
-| `diff` | Compare module state/version between two databases |
-| `upgrade` | Upgrade addon(s) - explicit list or git-changed |
-| `backup` | Dump a database + filestore |
-| `restore` | Restore a backup (dir / dump / Odoo.sh zip), optional `--sanitize` |
-| `sanitize` | Make a restored prod DB safe: pause crons, kill mail, scrub PII |
-| `pull` | Fetch the latest backup over SSH and restore it |
-| `reset-admin` | Reset the main user's login/password |
-| `reset` | Drop and recreate a database |
-| `init` | Bootstrap a new project from an existing one |
-| `test` | Run addon tests in a disposable DB (one module / `--all` / `--changed`) |
+The command surface stays deliberately flat for fast daily use (`odooctl up acme`,
+not `odooctl runtime up acme`). `odooctl --help` groups commands by purpose so the
+less frequent operations remain easy to discover. Compatibility aliases are kept
+for renamed commands: `url` still invokes `open`, and `df` still invokes `space`.
+
+| Family | Command | Purpose |
+|---|---|---|
+| Project management | `discover` | (Re)scan folders for Odoo projects |
+| Project management | `projects` | List registered projects |
+| Project management | `init` | Bootstrap a new project |
+| Project management | `remove` | Stop, unregister and optionally delete a project |
+| Runtime | `status` | Containers + databases, all projects or one |
+| Runtime | `up` / `down` | Start or stop a project's containers |
+| Runtime | `restart` | Restart one service |
+| Runtime | `logs` | Show / stream logs (`--errors`: only errors + tracebacks) |
+| Runtime | `dev` | Watch `custom_addons` and restart web on source changes |
+| Runtime | `open` (`url`) | Open the project in a browser |
+| Development | `psql` | Interactive SQL session |
+| Development | `shell` | Interactive `odoo shell` session |
+| Development | `addons` | List custom addons (+ install state) |
+| Development | `deps` | Dependency tree, reverse deps, cycle detection |
+| Development | `diff` | Compare module state/version between two databases |
+| Development | `upgrade` | Upgrade addon(s) - explicit list or git-changed |
+| Development | `test` | Run addon tests in disposable databases |
+| Database | `backup` / `restore` | Save or restore a database and filestore |
+| Database | `pull` | Fetch the latest backup over SSH and restore it |
+| Database | `sanitize` | Pause crons, disable mail and scrub PII |
+| Database | `reset` / `reset-admin` | Recreate a database or reset its main user |
+| Database | `fix-icons` | Re-import menu icons after a restore without filestore |
+| Storage | `space` (`df`) | Explain Docker and project disk usage |
+| Storage | `gc` | Plan or execute safe cleanup; `--deep` wipes project volumes |
+
+Add global `--debug` before a command to print operation timings:
+
+```bash
+odooctl --debug status
+```
 
 Detailed documentation for every command follows.
 
@@ -259,7 +272,7 @@ odooctl restart acme --service db # restart another service
 
 Typical use after editing Python files in `custom_addons`.
 
-## `logs` and `url` - following output, opening the app
+## `logs` and `open` - following output, opening the app
 
 ```bash
 odooctl logs acme             # last 100 lines of the web container
@@ -272,7 +285,8 @@ odooctl logs acme -e -f       # stream, filtered to errors
 ```
 
 ```bash
-odooctl url acme              # prints http://localhost:<port> and opens browser
+odooctl open acme             # prints http://localhost:<port> and opens browser
+# `odooctl url acme` remains a compatibility alias
 ```
 
 ## `dev` - auto-restart on code changes
@@ -472,6 +486,7 @@ Supported formats (detected automatically):
 Behaviour:
 
 - If a database with the target name exists you are asked to confirm overwriting it.
+- Pass `--yes` / `-y` to skip that confirmation in scripts.
 - Override the target name with `--name other-db` (useful for keeping the original).
 - Missing filestore produces a warning - attachments will be broken but the rest
   works.
@@ -505,6 +520,26 @@ Each step prints how many records it touched.
 | `--names` | Also replace partner names with `Partner #id` |
 | `--keep-crons` | Leave scheduled actions enabled |
 | `--keep-mail` | Skip mail queue purge / server disable |
+
+## `fix-icons` - bring missing menu icons back
+
+Restores without a filestore break every app menu icon: Odoo stores menu icons as
+attachments whose bytes live in the filestore, and without that filestore the menus
+render a grey placeholder. The PNGs still exist inside the addon source folders, so
+`fix-icons` re-imports them into the database:
+
+```bash
+odooctl fix-icons acme -d acme-prod
+```
+
+It checks every menu with a `web_icon`, tests whether its attachment resolves to a
+real file, and for broken ones re-reads the image from
+`custom_addons/<module>/static/...` (core addon paths work too). Intact icons are
+left alone. Restart web or hard-refresh the browser afterwards.
+
+`pull` and `restore` run this automatically whenever the restore had no filestore,
+so icons come back without any extra step. Icons that exist neither in the database
+nor in any addon folder are counted and reported as unrepairable.
 
 ## `pull` - latest backup over SSH, restored, in one command
 
@@ -699,11 +734,12 @@ Options:
 
 ---
 
-## `df` - where your disk space went
+## `space` - where your disk space went
 
 ```bash
-odooctl df              # every registered project
-odooctl df acme         # one project
+odooctl space              # every registered project
+odooctl space acme         # one project
+# `odooctl df` remains a compatibility alias
 ```
 
 Prints global Docker totals (images, volumes, build cache, dangling layers, how
@@ -754,13 +790,15 @@ stopped projects still get host-side cleanup (backups, logs).
 ### The nuclear option
 
 ```bash
-odooctl gc-deep acme
+odooctl gc acme --deep
 ```
 
 Wipes **all named volumes of one project** - every database and every filestore -
 after a loud confirmation. Bind mounts (addons, config, backups) are untouched.
 Use when a pgdata volume has bloated beyond recovery; afterwards `odooctl up`
 gives you a factory-fresh environment, and `restore` brings your data back.
+The former `odooctl gc-deep acme` spelling remains available for compatibility but
+is hidden from the main help.
 
 > **macOS note:** after big cleanups, Docker Desktop's Linux VM keeps the disk
 > space it allocated until restarted (or trimmed automatically on recent
@@ -880,10 +918,10 @@ Shouldn't happen anymore - `reset-admin` disables TOTP on the reset user. If it 
 run `odooctl reset-admin <project> -d <db>` again.
 
 **Docker takes tons of disk space**
-Run `odooctl df` to see where it goes, then `odooctl gc --apply`. Typical culprits:
+Run `odooctl space` to see where it goes, then `odooctl gc --apply`. Typical culprits:
 dangling layers from rebuilds, build cache, leftover `test_*` databases and the
 filestores of databases deleted long ago. If a `pgdata` volume itself has grown
-huge (Postgres never shrinks files), use `odooctl gc-deep <project>` after taking
+huge (Postgres never shrinks files), use `odooctl gc <project> --deep` after taking
 a backup.
 
 ## Development
@@ -897,3 +935,7 @@ pytest -q
 
 CI runs lint + tests on Python 3.10 / 3.12 / 3.14 on every push and PR. Please add
 tests for new features; keep the suite green.
+
+The Click layer is organized by user-facing family under `src/odooctl/commands/`.
+Keep handlers thin and put reusable behavior in the existing domain modules such as
+`compose.py`, `restore.py`, `testing.py` and `space.py`.

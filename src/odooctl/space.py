@@ -17,6 +17,7 @@ class SpaceError(RuntimeError):
 
 # ---------------------------------------------------------------- pure helpers
 
+
 def du_bytes(path):
     root = Path(path)
     if root.is_symlink():
@@ -114,6 +115,7 @@ def newest_stamps(dirs):
 
 
 # ------------------------------------------------------------- docker queries
+
 
 def _docker(*args, timeout=120):
     cmd = ["docker", *args]
@@ -238,11 +240,13 @@ def list_images():
         except json.JSONDecodeError:
             continue
         repo, tag = r.get("Repository"), r.get("Tag")
-        rows.append({
-            "id": r.get("ID"),
-            "tag": f"{repo}:{tag}" if repo and tag and tag != "<none>" else None,
-            "size_bytes": parse_bytes(r.get("Size")),
-        })
+        rows.append(
+            {
+                "id": r.get("ID"),
+                "tag": f"{repo}:{tag}" if repo and tag and tag != "<none>" else None,
+                "size_bytes": parse_bytes(r.get("Size")),
+            }
+        )
     return rows
 
 
@@ -314,7 +318,9 @@ def bind_mounts(entry):
                 host, target = parts[0], parts[1]
             if not host or not target:
                 continue
-            label = next((lbl for prefix, lbl in BIND_TARGET_LABELS if target.rstrip("/").startswith(prefix)), None)
+            label = next(
+                (lbl for prefix, lbl in BIND_TARGET_LABELS if target.rstrip("/").startswith(prefix)), None
+            )
             if label is None:
                 continue
             host_path = Path(host).expanduser()
@@ -360,11 +366,7 @@ def all_volume_sizes():
 
 def project_volume_sizes(slug):
     """{volume_name: bytes} for named volumes belonging to a compose project."""
-    return {
-        name: size
-        for name, size in all_volume_sizes().items()
-        if name.startswith(f"{slug}_")
-    }
+    return {name: size for name, size in all_volume_sizes().items() if name.startswith(f"{slug}_")}
 
 
 def anonymous_volume_orphans():
@@ -390,9 +392,7 @@ def anonymous_volume_orphans():
 def filestore_dirs(entry):
     """[dirname] inside /var/lib/odoo/filestore of the web container."""
     web = entry["services"]["web"]
-    proc = compose.exec_service(
-        entry["path"], web, "ls", "-1", testing.FILESTORE_DIR, check=False
-    )
+    proc = compose.exec_service(entry["path"], web, "ls", "-1", testing.FILESTORE_DIR, check=False)
     if proc.returncode != 0:
         return None
     return [line.strip() for line in proc.stdout.decode().splitlines() if line.strip()]
@@ -400,9 +400,7 @@ def filestore_dirs(entry):
 
 def filestore_size(entry, db):
     web = entry["services"]["web"]
-    proc = compose.exec_service(
-        entry["path"], web, "du", "-sb", f"{testing.FILESTORE_DIR}/{db}", check=False
-    )
+    proc = compose.exec_service(entry["path"], web, "du", "-sb", f"{testing.FILESTORE_DIR}/{db}", check=False)
     if proc.returncode != 0:
         return None
     first = proc.stdout.decode().split()
@@ -410,6 +408,7 @@ def filestore_size(entry, db):
 
 
 # ------------------------------------------------------------------- gc plan
+
 
 @dataclass
 class GCItem:
@@ -434,53 +433,63 @@ def build_gc_plan(projects=None, keep_backups=3, keep_logs=20):
 
     dangling = dangling_images()
     if dangling:
-        items.append(GCItem(
-            kind="images",
-            description=f"remove {len(dangling)} dangling image layer(s)",
-            target="(docker image prune)",
-            bytes_free=sum(d["size_bytes"] or 0 for d in dangling),
-        ))
+        items.append(
+            GCItem(
+                kind="images",
+                description=f"remove {len(dangling)} dangling image layer(s)",
+                target="(docker image prune)",
+                bytes_free=sum(d["size_bytes"] or 0 for d in dangling),
+            )
+        )
 
     build = system_df().get("build cache") or {}
     if build.get("reclaim_bytes"):
-        items.append(GCItem(
-            kind="builder",
-            description="prune docker build cache (next builds will be slower)",
-            target="(docker builder prune)",
-            bytes_free=build["reclaim_bytes"],
-        ))
+        items.append(
+            GCItem(
+                kind="builder",
+                description="prune docker build cache (next builds will be slower)",
+                target="(docker builder prune)",
+                bytes_free=build["reclaim_bytes"],
+            )
+        )
 
     try:
         orphans = anonymous_volume_orphans()
     except SpaceError:
         orphans = []
     for vol in orphans:
-        items.append(GCItem(
-            kind="volume",
-            description="orphan anonymous volume (no container uses it)",
-            target=vol["name"],
-            bytes_free=vol["size_bytes"],
-        ))
+        items.append(
+            GCItem(
+                kind="volume",
+                description="orphan anonymous volume (no container uses it)",
+                target=vol["name"],
+                bytes_free=vol["size_bytes"],
+            )
+        )
 
     for slug, entry in sorted(projects.items()):
         path = Path(entry["path"])
 
         for doomed in plan_backup_prunes(path / "backups" / "odooctl", keep_backups):
-            items.append(GCItem(
-                kind="dir",
-                description="old backup snapshot",
-                target=str(doomed),
-                project=slug,
-                bytes_free=du_bytes(doomed),
-            ))
+            items.append(
+                GCItem(
+                    kind="dir",
+                    description="old backup snapshot",
+                    target=str(doomed),
+                    project=slug,
+                    bytes_free=du_bytes(doomed),
+                )
+            )
         for doomed in plan_log_prunes(path / "backups" / "test_logs", keep_logs):
-            items.append(GCItem(
-                kind="dir",
-                description="old test log",
-                target=str(doomed),
-                project=slug,
-                bytes_free=du_bytes(doomed),
-            ))
+            items.append(
+                GCItem(
+                    kind="dir",
+                    description="old test log",
+                    target=str(doomed),
+                    project=slug,
+                    bytes_free=du_bytes(doomed),
+                )
+            )
 
         state_db = state_web = None
         try:
@@ -493,14 +502,16 @@ def build_gc_plan(projects=None, keep_backups=3, keep_logs=20):
         dbs = compose.databases(entry["path"], entry.get("db_user", "odoo")) or []
         test_dbs = [d for d in dbs if d.startswith("test_")]
         for db in test_dbs:
-            items.append(GCItem(
-                kind="db",
-                description=f"drop throwaway test database '{db}' (+filestore)",
-                target=db,
-                project=slug,
-                entry=entry,
-                dbname=db,
-            ))
+            items.append(
+                GCItem(
+                    kind="db",
+                    description=f"drop throwaway test database '{db}' (+filestore)",
+                    target=db,
+                    project=slug,
+                    entry=entry,
+                    dbname=db,
+                )
+            )
 
         if state_web != "running":
             continue
@@ -511,28 +522,30 @@ def build_gc_plan(projects=None, keep_backups=3, keep_logs=20):
         for store in stores:
             if store.startswith("test_") or store in live:
                 continue
-            items.append(GCItem(
-                kind="filestore",
-                description="orphan filestore (no matching database)",
-                target=store,
-                project=slug,
-                bytes_free=filestore_size(entry, store),
-                entry=entry,
-                dbname=store,
-            ))
+            items.append(
+                GCItem(
+                    kind="filestore",
+                    description="orphan filestore (no matching database)",
+                    target=store,
+                    project=slug,
+                    bytes_free=filestore_size(entry, store),
+                    entry=entry,
+                    dbname=store,
+                )
+            )
 
     return items
 
 
 _KIND_ORDER = {
-    "rmi": 0,       # removing images first frees MORE cache to become cleanable
+    "rmi": 0,  # removing images first frees MORE cache to become cleanable
     "images": 1,
     "db": 2,
     "filestore": 3,
     "dir": 4,
     "volume": 5,
     "deep-volumes": 6,
-    "builder": 9,   # always last: sweep up cache orphaned by the steps above
+    "builder": 9,  # always last: sweep up cache orphaned by the steps above
 }
 
 

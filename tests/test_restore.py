@@ -127,8 +127,7 @@ def test_sql_chunks_skips_unavailable_extensions(tmp_path):
             "CREATE TABLE x (id int);\n"
         )
     skipped = []
-    text = b"".join(restore._sql_chunks(gz, available={"pg_trgm", "plpgsql"},
-                                         skipped=skipped)).decode()
+    text = b"".join(restore._sql_chunks(gz, available={"pg_trgm", "plpgsql"}, skipped=skipped)).decode()
     assert "vector" not in text
     assert "CREATE EXTENSION IF NOT EXISTS pg_trgm;" in text
     assert "COMMENT ON EXTENSION pg_trgm" in text
@@ -188,15 +187,14 @@ def test_restore_odoosh_raw_replays_sql_and_filestore(tmp_path, monkeypatch):
     entry = {"services": {"web": "web", "db": "db"}, "db_user": "odoo"}
     info = restore.restore("/proj", entry, d, "restored_db")
 
-    assert info == {"db": "restored_db", "filestore": True, "format": "odoosh_raw",
-                    "skipped_extensions": []}
+    assert info == {"db": "restored_db", "filestore": True, "format": "odoosh_raw", "skipped_extensions": []}
     assert len(stream_calls) == 1
     args, data = stream_calls[0]
     assert args[:3] == ["exec", "-T", "db"]
     assert "-v" in args and "ON_ERROR_STOP=1" in args
     idx = list(args).index("-d")
     assert args[idx + 1] == "restored_db"
-    assert b"SELECT 1;" in data            # decompressed SQL reached psql
+    assert b"SELECT 1;" in data  # decompressed SQL reached psql
     tar_calls = [c for c in exec_calls if c[0] == "web"]
     assert tar_calls and "mkdir -p /var/lib/odoo/filestore/restored_db" in tar_calls[0][1][-1]
 
@@ -221,6 +219,7 @@ def test_dump_create_target_plain_dump_returns_none():
 def tmp_header_file(text):
     import gzip
     from pathlib import Path
+
     p = Path("/tmp") / f"hdr_{abs(hash(text))}.sql.gz"
     with gzip.open(p, "wt") as fh:
         fh.write(text)
@@ -233,8 +232,8 @@ def test_restore_odoosh_raw_create_style_renames(tmp_path, monkeypatch):
     d = tmp_path / "bundle"
     d.mkdir()
     header = (
-        "-- dump\nCREATE DATABASE \"prod-daily\" WITH TEMPLATE = template0;\n"
-        "\\connect \"prod-daily\"\nCOPY public.x (a) FROM stdin;\n"
+        '-- dump\nCREATE DATABASE "prod-daily" WITH TEMPLATE = template0;\n'
+        '\\connect "prod-daily"\nCOPY public.x (a) FROM stdin;\n'
     )
     with gzip.open(d / "dump.sql.gz", "wb") as fh:
         fh.write(header.encode())
@@ -257,8 +256,7 @@ def test_restore_odoosh_raw_create_style_renames(tmp_path, monkeypatch):
         return 0
 
     monkeypatch.setattr(restore.compose, "exec_service", fake_exec)
-    monkeypatch.setattr(restore, "_available_extensions",
-                        lambda p, e: {"pg_trgm", "plpgsql"})
+    monkeypatch.setattr(restore, "_available_extensions", lambda p, e: {"pg_trgm", "plpgsql"})
     monkeypatch.setattr(restore.compose, "run_with_stdin_stream", fake_stream)
 
     entry = {"services": {"web": "web", "db": "db"}, "db_user": "odoo"}

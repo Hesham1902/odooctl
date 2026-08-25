@@ -4,9 +4,7 @@ from odooctl.manifest import list_addons, read_manifest
 def test_read_manifest_valid(tmp_path):
     addon = tmp_path / "mod_a"
     addon.mkdir()
-    (addon / "__manifest__.py").write_text(
-        "{'name': 'Mod A', 'version': '16.0.1.0.0', 'depends': ['base']}"
-    )
+    (addon / "__manifest__.py").write_text("{'name': 'Mod A', 'version': '16.0.1.0.0', 'depends': ['base']}")
     mf = read_manifest(addon)
     assert mf["name"] == "Mod A"
     assert mf["depends"] == ["base"]

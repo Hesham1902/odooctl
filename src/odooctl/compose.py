@@ -18,8 +18,16 @@ def _base(project_path: Path):
     return ["docker", "compose", "-f", str(compose), "--project-directory", str(project_path)]
 
 
-def run(project_path, *args, capture=True, input_bytes=None, check=True, timeout=None,
-        stdout_file=None, stdin_file=None):
+def run(
+    project_path,
+    *args,
+    capture=True,
+    input_bytes=None,
+    check=True,
+    timeout=None,
+    stdout_file=None,
+    stdin_file=None,
+):
     cmd = _base(project_path) + list(args)
     try:
         if stdout_file is not None or stdin_file is not None:
@@ -81,20 +89,43 @@ def service_state(project_path, service):
     return None, None
 
 
-def exec_service(project_path, service, *cmd, capture=True, input_bytes=None, user=None,
-                 check=True, stdout_file=None, stdin_file=None):
+def exec_service(
+    project_path,
+    service,
+    *cmd,
+    capture=True,
+    input_bytes=None,
+    user=None,
+    check=True,
+    stdout_file=None,
+    stdin_file=None,
+):
     args = ["exec", "-T"]
     if user:
         args += ["-u", user]
     args += [service] + list(cmd)
-    return run(project_path, *args, capture=capture, input_bytes=input_bytes, check=check,
-               stdout_file=stdout_file, stdin_file=stdin_file)
+    return run(
+        project_path,
+        *args,
+        capture=capture,
+        input_bytes=input_bytes,
+        check=check,
+        stdout_file=stdout_file,
+        stdin_file=stdin_file,
+    )
 
 
-def databases(project_path, db_user="odoo"):
-    state, _ = service_state(project_path, "db")
-    if state != "running":
-        return None
+def databases(project_path, db_user="odoo", check_running=True):
+    """List user databases, optionally reusing a caller's service-state check.
+
+    Commands such as ``status`` already have the full ``docker compose ps``
+    result. Allowing them to skip the duplicate state probe removes one Docker
+    subprocess per project while keeping the safe default for all other callers.
+    """
+    if check_running:
+        state, _ = service_state(project_path, "db")
+        if state != "running":
+            return None
     proc = exec_service(
         project_path,
         "db",
@@ -152,8 +183,7 @@ def run_with_stdin_stream(project_path, args, chunks):
     """
     cmd = _base(project_path) + list(args)
     with tempfile.TemporaryFile() as errf:
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
-                                stdout=subprocess.DEVNULL, stderr=errf)
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=errf)
         try:
             for chunk in chunks:
                 proc.stdin.write(chunk)

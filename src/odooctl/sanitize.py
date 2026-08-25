@@ -76,20 +76,31 @@ def parse_output(text):
             end = payload.rfind("}")
             if start != -1 and end != -1:
                 try:
-                    return json.loads(payload[start:end + 1])
+                    return json.loads(payload[start : end + 1])
                 except json.JSONDecodeError:
                     pass
     return None
 
 
-def sanitize(project_path, entry, db, with_names=False, keep_crons=False, keep_mail=False,
-             scrub_contacts=True):
-    script = build_script(with_names=with_names, keep_crons=keep_crons,
-                          keep_mail=keep_mail, scrub_contacts=scrub_contacts)
+def sanitize(
+    project_path, entry, db, with_names=False, keep_crons=False, keep_mail=False, scrub_contacts=True
+):
+    script = build_script(
+        with_names=with_names, keep_crons=keep_crons, keep_mail=keep_mail, scrub_contacts=scrub_contacts
+    )
     proc = compose.run(
         project_path,
-        "run", "--rm", "-T", entry["services"]["web"],
-        "odoo", "shell", "-c", "/etc/odoo/odoo.conf", "-d", db, "--no-http",
+        "run",
+        "--rm",
+        "-T",
+        entry["services"]["web"],
+        "odoo",
+        "shell",
+        "-c",
+        "/etc/odoo/odoo.conf",
+        "-d",
+        db,
+        "--no-http",
         input_bytes=script.encode(),
         check=False,
     )

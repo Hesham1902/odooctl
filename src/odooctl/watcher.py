@@ -20,8 +20,9 @@ def diff_files(old, new):
     return sorted(changed)
 
 
-def watch(root, exts=("py",), interval=0.5, debounce=0.8,
-          echo=lambda msg: print(msg), restart=None, max_cycles=None):
+def watch(
+    root, exts=("py",), interval=0.5, debounce=0.8, echo=lambda msg: print(msg), restart=None, max_cycles=None
+):
     """Poll `root`; call restart() after each settled change. Blocks until Ctrl-C."""
     echo(f"watching {root} (*.{', *.'.join(sorted(exts))})")
     last = snapshot(root, exts)

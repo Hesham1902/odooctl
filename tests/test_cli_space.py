@@ -7,16 +7,20 @@ from odooctl import cli
 
 def _register(slug, tmp_path):
     from odooctl import registry
+
     d = tmp_path / slug
     d.mkdir()
-    registry.register(slug, {
-        "compose_file": str(d / "docker-compose.yml"),
-        "path": str(d),
-        "services": {"web": "web", "db": "db"},
-        "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
-        "ports": {"http": 8069},
-        "db_user": "odoo",
-    })
+    registry.register(
+        slug,
+        {
+            "compose_file": str(d / "docker-compose.yml"),
+            "path": str(d),
+            "services": {"web": "web", "db": "db"},
+            "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
+            "ports": {"http": 8069},
+            "db_user": "odoo",
+        },
+    )
     return registry.get_projects()[slug]
 
 
@@ -24,16 +28,30 @@ def test_df_reports_global_and_project(tmp_path, monkeypatch):
     entry = _register("acme", tmp_path)
 
     monkeypatch.setattr(cli.compose, "daemon_available", lambda: True)
-    monkeypatch.setattr(cli.space, "system_df", lambda: {
-        "images": {"total": 5, "active": 2, "size_bytes": 12_000_000_000, "reclaim_bytes": None},
-        "local volumes": {"total": 4, "active": 2, "size_bytes": 8_000_000_000, "reclaim_bytes": None},
-        "build cache": {"total": 25, "active": 0, "size_bytes": 1_500_000_000, "reclaim_bytes": 1_500_000_000},
-    })
-    monkeypatch.setattr(cli.space, "dangling_images", lambda: [
-        {"id": "abc123", "size_bytes": 640_000_000, "created": "2 weeks ago"},
-    ])
-    monkeypatch.setattr(cli.compose, "find_built_image",
-                        lambda e, role: f"acme-{role}" if role == "web" else None)
+    monkeypatch.setattr(
+        cli.space,
+        "system_df",
+        lambda: {
+            "images": {"total": 5, "active": 2, "size_bytes": 12_000_000_000, "reclaim_bytes": None},
+            "local volumes": {"total": 4, "active": 2, "size_bytes": 8_000_000_000, "reclaim_bytes": None},
+            "build cache": {
+                "total": 25,
+                "active": 0,
+                "size_bytes": 1_500_000_000,
+                "reclaim_bytes": 1_500_000_000,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        cli.space,
+        "dangling_images",
+        lambda: [
+            {"id": "abc123", "size_bytes": 640_000_000, "created": "2 weeks ago"},
+        ],
+    )
+    monkeypatch.setattr(
+        cli.compose, "find_built_image", lambda e, role: f"acme-{role}" if role == "web" else None
+    )
     monkeypatch.setattr(cli.space, "image_identity", lambda ref: ("sha256:aaa", 1_900_000_000))
     monkeypatch.setattr(cli.space, "list_images", lambda: [])
     monkeypatch.setattr(cli.space, "project_volume_sizes", lambda slug: {f"{slug}_pgdata": 850_000_000})
@@ -69,8 +87,12 @@ def test_df_marks_shared_images_and_savings(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli.compose, "find_built_image", fake_find)
 
-    ids = {("acme", "web"): "sha256:same", ("bravo", "web"): "sha256:same",
-           ("acme", "db"): "sha256:d1", ("bravo", "db"): "sha256:d2"}
+    ids = {
+        ("acme", "web"): "sha256:same",
+        ("bravo", "web"): "sha256:same",
+        ("acme", "db"): "sha256:d1",
+        ("bravo", "db"): "sha256:d2",
+    }
 
     def fake_identity(ref):
         for (slug, role), r in refs.items():
@@ -95,11 +117,15 @@ def test_df_lists_untracked_images(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.space, "system_df", lambda: {})
     monkeypatch.setattr(cli.space, "dangling_images", lambda: [])
     monkeypatch.setattr(cli.compose, "find_built_image", lambda e, role: None)
-    monkeypatch.setattr(cli.space, "list_images", lambda: [
-        {"id": "x1", "tag": "odoo:16", "size_bytes": 1_600_000_000},
-        {"id": "x2", "tag": None, "size_bytes": 999},          # dangling-ish, skipped
-        {"id": None, "tag": "weird:none-tagged", "size_bytes": 5},
-    ])
+    monkeypatch.setattr(
+        cli.space,
+        "list_images",
+        lambda: [
+            {"id": "x1", "tag": "odoo:16", "size_bytes": 1_600_000_000},
+            {"id": "x2", "tag": None, "size_bytes": 999},  # dangling-ish, skipped
+            {"id": None, "tag": "weird:none-tagged", "size_bytes": 5},
+        ],
+    )
 
     result = CliRunner().invoke(cli.main, ["df"])
     assert result.exit_code == 0, result.output
@@ -168,10 +194,8 @@ def test_remove_stops_containers_keeps_shared_image(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.compose, "service_state", lambda p, s: ("running", {}))
     downs = []
     monkeypatch.setattr(cli.compose, "run", lambda path, *a, **kw: downs.append(a))
-    monkeypatch.setattr(cli.compose, "find_built_image",
-                        lambda e, role: f"{Path(e['path']).name}-{role}")
-    monkeypatch.setattr(cli.space, "image_identity",
-                        lambda ref: ("sha256:" + "a" * 64, 700_000_000))
+    monkeypatch.setattr(cli.compose, "find_built_image", lambda e, role: f"{Path(e['path']).name}-{role}")
+    monkeypatch.setattr(cli.space, "image_identity", lambda ref: ("sha256:" + "a" * 64, 700_000_000))
     rmis = []
     monkeypatch.setattr(cli.subprocess, "run", lambda cmd, **kw: rmis.append(cmd))
 
@@ -191,10 +215,10 @@ def test_remove_removes_unshared_images(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli.compose, "daemon_available", lambda: True)
     monkeypatch.setattr(cli.compose, "service_state", lambda p, s: (None, {}))
-    monkeypatch.setattr(cli.compose, "find_built_image",
-                        lambda e, role: {"web": "solo-web", "db": None}.get(role))
-    monkeypatch.setattr(cli.space, "image_identity",
-                        lambda ref: ("sha256:" + "b" * 64, 755_000_000))
+    monkeypatch.setattr(
+        cli.compose, "find_built_image", lambda e, role: {"web": "solo-web", "db": None}.get(role)
+    )
+    monkeypatch.setattr(cli.space, "image_identity", lambda ref: ("sha256:" + "b" * 64, 755_000_000))
     rmis = []
     monkeypatch.setattr(cli.subprocess, "run", lambda cmd, **kw: rmis.append(cmd))
 

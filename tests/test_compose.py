@@ -26,8 +26,9 @@ def test_exec_service_forwards_stdin_and_stdout_files(tmp_path, monkeypatch):
 
     marker_out = object()
     marker_in = object()
-    compose.exec_service(proj, "db", "psql", "-d", "x",
-                         stdout_file=marker_out, stdin_file=marker_in, check=True)
+    compose.exec_service(
+        proj, "db", "psql", "-d", "x", stdout_file=marker_out, stdin_file=marker_in, check=True
+    )
 
     assert seen["cmd"][:2] == ["docker", "compose"]
     assert "exec" in seen["cmd"] and "-T" in seen["cmd"] and "db" in seen["cmd"]
@@ -90,8 +91,7 @@ def test_run_with_stdin_stream_pumps_chunks_and_raises_on_error(tmp_path, monkey
     monkeypatch.setattr(compose.subprocess, "Popen", lambda *a, **kw: procs.pop(0))
     monkeypatch.setattr(compose.tempfile, "TemporaryFile", FakeTempFile)
 
-    rc = compose.run_with_stdin_stream(proj, ["exec", "-T", "db", "psql"],
-                                       [b"SELECT 1;\n", b"SELECT 2;\n"])
+    rc = compose.run_with_stdin_stream(proj, ["exec", "-T", "db", "psql"], [b"SELECT 1;\n", b"SELECT 2;\n"])
     assert rc == 0
     assert written == [b"SELECT 1;\n", b"SELECT 2;\n"]
 

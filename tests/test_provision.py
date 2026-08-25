@@ -29,6 +29,7 @@ def _template_data(version="18", host_prefix="/home/dev"):
 def test_rewrite_compose_renames_and_reallocates():
     def alloc(preferred):
         return preferred + 1000
+
     data, web, db = provision.rewrite_compose(_template_data(), "acme", "18.0", alloc)
 
     assert data["name"] == "acme"
@@ -41,6 +42,7 @@ def test_rewrite_compose_renames_and_reallocates():
 def test_rewrite_compose_fixes_linux_home_and_version():
     def alloc(p):
         return p + 1
+
     data, _, _ = provision.rewrite_compose(_template_data(host_prefix="/home/dev"), "c", "17.0", alloc)
     volumes = data["services"]["web"]["volumes"]
     enterprise = [v for v in volumes if "_odoo_addons" in v][0]
@@ -53,8 +55,10 @@ def test_rewrite_compose_keeps_mac_style_path_when_already_local(tmp_path):
     local = tmp_path / "_odoo_addons" / "odoo-18.0" / "odoo" / "addons"
     data = _template_data()
     data["services"]["web"]["volumes"] = [f"{local}:/mnt/enterprise"]
+
     def alloc(p):
         return p + 1
+
     new_data, _, _ = provision.rewrite_compose(data, "c", None, alloc)
     vol = new_data["services"]["web"]["volumes"][0]
     assert str(local) in vol
@@ -63,6 +67,7 @@ def test_rewrite_compose_keeps_mac_style_path_when_already_local(tmp_path):
 def test_ports_of_mapping():
     def alloc(p):
         return p + 1000
+
     data, web, db = provision.rewrite_compose(_template_data(), "x", None, alloc)
     ports = provision.ports_of(data, web, db)
     assert ports == {"http": 9056, "longpolling": 9072, "debugpy": 9888, "pg_postgres": 6456}
@@ -134,8 +139,7 @@ def test_find_built_image_prefers_explicit_then_convention(tmp_path, monkeypatch
     d = tmp_path / "proj"
     d.mkdir()
     (d / "docker-compose.yml").write_text(
-        "name: proj\nservices:\n  web:\n    image: team/odoo-custom:18\n"
-        "  db:\n    image: postgres:16\n"
+        "name: proj\nservices:\n  web:\n    image: team/odoo-custom:18\n  db:\n    image: postgres:16\n"
     )
     entry = {
         "compose_file": str(d / "docker-compose.yml"),
@@ -145,7 +149,8 @@ def test_find_built_image_prefers_explicit_then_convention(tmp_path, monkeypatch
     }
 
     monkeypatch.setattr(
-        compose, "local_image",
+        compose,
+        "local_image",
         lambda name: name if name == "team/odoo-custom:18" else None,
     )
     assert compose.find_built_image(entry, "web") == "team/odoo-custom:18"
@@ -156,9 +161,7 @@ def test_find_built_image_falls_back_through_candidates(tmp_path, monkeypatch):
 
     d = tmp_path / "some-folder"
     d.mkdir()
-    (d / "docker-compose.yml").write_text(
-        "name: team-stack\nservices:\n  web:\n    build: .\n"
-    )
+    (d / "docker-compose.yml").write_text("name: team-stack\nservices:\n  web:\n    build: .\n")
     entry = {
         "compose_file": str(d / "docker-compose.yml"),
         "path": str(d),

@@ -10,15 +10,18 @@ def _register(slug, tmp_path):
     d.mkdir()
     addons = d / "custom_addons"
     addons.mkdir()
-    registry.register(slug, {
-        "compose_file": str(d / "docker-compose.yml"),
-        "path": str(d),
-        "services": {"web": "web", "db": "db"},
-        "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
-        "ports": {"http": 8069},
-        "custom_addons": str(addons),
-        "db_user": "odoo",
-    })
+    registry.register(
+        slug,
+        {
+            "compose_file": str(d / "docker-compose.yml"),
+            "path": str(d),
+            "services": {"web": "web", "db": "db"},
+            "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
+            "ports": {"http": 8069},
+            "custom_addons": str(addons),
+            "db_user": "odoo",
+        },
+    )
     return registry.get_projects()[slug]
 
 

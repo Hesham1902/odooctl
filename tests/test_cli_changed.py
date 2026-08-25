@@ -10,15 +10,18 @@ def _register(slug, tmp_path):
     d.mkdir()
     addons = d / "custom_addons"
     addons.mkdir()
-    registry.register(slug, {
-        "compose_file": str(d / "docker-compose.yml"),
-        "path": str(d),
-        "services": {"web": "web", "db": "db"},
-        "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
-        "ports": {"http": 8069},
-        "custom_addons": str(addons),
-        "db_user": "odoo",
-    })
+    registry.register(
+        slug,
+        {
+            "compose_file": str(d / "docker-compose.yml"),
+            "path": str(d),
+            "services": {"web": "web", "db": "db"},
+            "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
+            "ports": {"http": 8069},
+            "custom_addons": str(addons),
+            "db_user": "odoo",
+        },
+    )
     return registry.get_projects()[slug]
 
 
@@ -48,11 +51,9 @@ def test_upgrade_changed_runs_combined_dash_u(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.vcs, "changed_modules", lambda p, a, ref=None: ["alpha", "beta"])
 
     cmds = []
-    monkeypatch.setattr(cli.compose, "live_output",
-                        lambda path, *a: cmds.append(a) or 0)
+    monkeypatch.setattr(cli.compose, "live_output", lambda path, *a: cmds.append(a) or 0)
 
-    result = CliRunner().invoke(
-        cli.main, ["upgrade", "acme", "--changed", "-d", "prod"])
+    result = CliRunner().invoke(cli.main, ["upgrade", "acme", "--changed", "-d", "prod"])
     assert result.exit_code == 0, result.output
     run_args = cmds[0]
     joined = run_args[run_args.index("-u") + 1]
@@ -63,8 +64,7 @@ def test_upgrade_changed_runs_combined_dash_u(tmp_path, monkeypatch):
 def test_upgrade_rejects_module_and_changed(tmp_path, monkeypatch):
     _register("acme", tmp_path)
     monkeypatch.setattr(cli.compose, "daemon_available", lambda: True)
-    result = CliRunner().invoke(
-        cli.main, ["upgrade", "acme", "foo", "--changed", "-d", "prod"])
+    result = CliRunner().invoke(cli.main, ["upgrade", "acme", "foo", "--changed", "-d", "prod"])
     assert result.exit_code != 0
     assert "not both" in result.output
 
@@ -73,8 +73,7 @@ def test_upgrade_no_changed_modules_errors(tmp_path, monkeypatch):
     _register("acme", tmp_path)
     monkeypatch.setattr(cli.compose, "daemon_available", lambda: True)
     monkeypatch.setattr(cli.vcs, "changed_modules", lambda p, a, ref=None: [])
-    result = CliRunner().invoke(
-        cli.main, ["upgrade", "acme", "--changed", "-d", "prod"])
+    result = CliRunner().invoke(cli.main, ["upgrade", "acme", "--changed", "-d", "prod"])
     assert result.exit_code != 0
     assert "No changed custom addons" in result.output
 

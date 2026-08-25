@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -11,15 +10,18 @@ def _register(slug, tmp_path):
     d.mkdir()
     addons = d / "custom_addons"
     addons.mkdir()
-    registry.register(slug, {
-        "compose_file": str(d / "docker-compose.yml"),
-        "path": str(d),
-        "services": {"web": "web", "db": "db"},
-        "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
-        "ports": {"http": 8069},
-        "custom_addons": str(addons),
-        "db_user": "odoo",
-    })
+    registry.register(
+        slug,
+        {
+            "compose_file": str(d / "docker-compose.yml"),
+            "path": str(d),
+            "services": {"web": "web", "db": "db"},
+            "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
+            "ports": {"http": 8069},
+            "custom_addons": str(addons),
+            "db_user": "odoo",
+        },
+    )
     return registry.get_projects()[slug]
 
 
@@ -34,8 +36,7 @@ def _ok_result(ran=5):
 
 
 def _fail_result():
-    return testing.TestResult(ok=False, ran=3, failures=["FAIL: test_x"],
-                              log_path=None, raw_tail="boom")
+    return testing.TestResult(ok=False, ran=3, failures=["FAIL: test_x"], log_path=None, raw_tail="boom")
 
 
 def test_test_requires_module_or_all(tmp_path, monkeypatch):
@@ -112,7 +113,6 @@ def test_test_single_module_still_works(tmp_path, monkeypatch):
         return _ok_result()
 
     monkeypatch.setattr(cli.testing, "run_tests", fake_run_tests)
-    result = CliRunner().invoke(
-        cli.main, ["test", "acme", "solo", "-d", "custom_db", "--keep-db"])
+    result = CliRunner().invoke(cli.main, ["test", "acme", "solo", "-d", "custom_db", "--keep-db"])
     assert result.exit_code == 0, result.output
     assert seen == {"module": "solo", "db": "custom_db"}
