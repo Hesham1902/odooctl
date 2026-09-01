@@ -4,6 +4,28 @@ from . import compose
 
 MARKER = "ODOOCTL_SANITIZE_OK"
 
+NEUTRALIZE = """
+try:
+    import odoo.modules.neutralize as neutralize
+    neutralize.neutralize_database(env.cr)
+    counts['neutralized'] = 1
+    env.cr.commit()
+except Exception:
+    pass
+try:
+    env.cr.execute(
+        "INSERT INTO ir_config_parameter (key, value) "
+        "VALUES ('database.is_neutralized', 'True') "
+        "ON CONFLICT (key) DO UPDATE SET value = 'True'"
+    )
+    env.cr.execute("UPDATE ir_ui_view SET active = true WHERE key = 'web.neutralize_banner'")
+    env.cr.execute("UPDATE ir_ui_view SET active = true WHERE key = 'website.neutralize_ribbon'")
+    counts['neutralized'] = 1
+    env.cr.commit()
+except Exception:
+    pass
+"""
+
 CRONS = """
 if 'ir.cron' in env:
     env.cr.execute("UPDATE ir_cron SET active = FALSE WHERE active")
@@ -56,6 +78,7 @@ env.cr.commit()
 
 def build_script(with_names=False, keep_crons=False, keep_mail=False, scrub_contacts=True):
     parts = ["import json", "counts = {}"]
+    parts.append(NEUTRALIZE)
     if not keep_crons:
         parts.append(CRONS)
     if not keep_mail:
@@ -113,6 +136,7 @@ def sanitize(
 
 
 LABELS = [
+    ("neutralized", "neutralization active (banner & safe-mode enabled)"),
     ("crons_paused", "scheduled actions paused"),
     ("mails_purged", "queued mails deleted"),
     ("smtp_disabled", "outgoing mail servers disabled"),

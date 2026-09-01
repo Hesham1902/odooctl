@@ -496,9 +496,10 @@ Behaviour:
 
 ## `sanitize` - make a restored prod DB safe
 
-Restored production databases come with live cron jobs, queued e-mails and configured
-SMTP servers. That is how a local dev copy ends up e-mailing real customers.
-`sanitize` switches all of it off, then scrubs personal data:
+Restored production databases come with live cron jobs, queued e-mails, active payment
+providers and configured SMTP servers. That is how a local dev copy ends up e-mailing real
+customers or charging real cards. `sanitize` executes Odoo's native neutralization engine
+and scrubs personal data:
 
 ```bash
 odooctl sanitize acme -d acme-prod            # or: odooctl restore acme <backup> --sanitize
@@ -506,10 +507,11 @@ odooctl sanitize acme -d acme-prod            # or: odooctl restore acme <backup
 
 What it does, in order:
 
-1. Pauses every scheduled action (`ir.cron`).
-2. Deletes queued mails (`mail.mail` in state `outgoing`).
-3. Disables outgoing mail servers and fetchmail servers.
-4. Clears `email`, `phone`, `mobile` and `vat` on all partners (in batches, committing
+1. Runs Odoo's native database neutralization (`odoo.modules.neutralize` and module `data/neutralize.sql` scripts) to switch payment providers and delivery carriers to test mode, activate the red top neutralization banner (`web.neutralize_banner`), website test ribbon (`website.neutralize_ribbon`), and set `database.is_neutralized = True`.
+2. Pauses every scheduled action (`ir.cron`).
+3. Deletes queued mails (`mail.mail` in state `outgoing`).
+4. Disables outgoing mail servers (`ir.mail_server`) and fetchmail servers.
+5. Clears `email`, `phone`, `mobile` and `vat` on all partners (in batches, committing
    as it goes). Raw SQL is used on purpose, so custom modules that override
    `res.partner.write()` cannot block the scrub.
 
@@ -570,6 +572,7 @@ odooctl pull acme --yes            # skip the overwrite prompt (scripts/CI)
 odooctl pull acme --keep-download  # keep the downloaded bundle
 odooctl pull acme --with-filestore # also fetch attachments (large)
 odooctl pull acme --path /backup/x.sql.gz   # one-off different file
+odooctl pull acme --no-sanitize    # skip automatic database neutralization
 ```
 
 What a pull does, in order:
@@ -583,8 +586,10 @@ What a pull does, in order:
    `<project>_pulled`. If that database already exists you are asked to confirm
    dropping it.
 4. Stops the web container so Postgres can drop and rename without connection
-   conflicts, replays the dump, and starts web again (also on failure).
-5. Resets the main internal user to `admin`/`admin` and prints the project URL.
+   conflicts, replays the dump, and re-imports missing menu icons if restored without filestore.
+5. Resets the main internal user to `admin`/`admin`.
+6. Sanitizes and neutralizes the database (activating neutralization banners and safe-mode).
+7. Starts web again (also on failure) and prints the project URL.
 
 Safety behaviour worth knowing:
 

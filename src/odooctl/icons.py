@@ -10,7 +10,9 @@ MARKER = "ODOOCTL_ICONS_OK"
 # folders, so we re-import them.
 
 SCRIPT = """
+import base64
 import glob
+import json
 import os
 
 checked = 0
@@ -23,7 +25,20 @@ menus = env['ir.ui.menu'].with_context(active_test=False).search([
 
 roots = ['/mnt/extra-addons', '/usr/lib/python3/dist-packages']
 roots += sorted(glob.glob('/usr/lib/python3*/site-packages'))
-filestore = env['ir.attachment']._filestore()
+
+# Odoo 16+ renders menu icons from the stored binary field web_icon_data
+# (backed by an ir.attachment with res_field='web_icon_data'). Older versions
+# read a name-matched attachment instead.
+has_icon_field = 'web_icon_data' in env['ir.ui.menu']._fields
+
+# clean up attachments created by older versions of this script - they are
+# not what the UI renders from
+legacy = env['ir.attachment'].search([
+    ('res_model', '=', 'ir.ui.menu'), ('res_field', '=', False),
+    ('name', 'like', ','),
+])
+if has_icon_field and legacy:
+    legacy.unlink()
 
 for menu in menus:
     module, sep, path = (menu.web_icon or '').partition(',')
@@ -32,36 +47,51 @@ for menu in menus:
     checked += 1
 
     attachment = env['ir.attachment']
-    for att in env['ir.attachment'].search([
-        ('res_model', '=', 'ir.ui.menu'), ('res_id', '=', menu.id),
-    ]):
-        if att.name == menu.web_icon or (att.name or '').endswith(path):
-            attachment = att
-            break
-
     intact = False
-    if attachment and attachment.db_datas:
-        intact = True
-    elif attachment and attachment.store_fname:
-        intact = os.path.isfile(attachment._full_path(attachment.store_fname))
+    try:
+        if has_icon_field:
+            intact = bool(menu.web_icon_data)
+        else:
+            for att in env['ir.attachment'].search([
+                ('res_model', '=', 'ir.ui.menu'), ('res_id', '=', menu.id),
+            ]):
+                if att.name == menu.web_icon or (att.name or '').endswith(path):
+                    attachment = att
+                    break
+            if attachment and attachment.db_datas:
+                intact = True
+            elif attachment and attachment.store_fname:
+                intact = os.path.isfile(attachment._full_path(attachment.store_fname))
+    except OSError:
+        intact = False
 
     if intact:
         continue
 
     data = None
     for root in roots:
-        candidate = os.path.join(root, module, path)
-        if os.path.isfile(candidate):
-            with open(candidate, 'rb') as fh:
-                data = fh.read()
+        for prefix in ('', 'odoo/addons'):
+            candidate = os.path.join(root, prefix, module, path)
+            if os.path.isfile(candidate):
+                with open(candidate, 'rb') as fh:
+                    data = fh.read()
+                break
+        if data is not None:
             break
     if data is None:
         missing_sources.append(menu.web_icon)
         continue
 
-    if attachment:
-        attachment.write({'raw': data, 'store_fname': False})
-    else:
+    if has_icon_field:
+        menu.web_icon_data = base64.b64encode(data)
+    elif attachment:
+        try:
+            attachment.write({'raw': data, 'store_fname': False})
+            fixed += 1
+            continue
+        except OSError:
+            attachment.unlink()
+    if not has_icon_field and not attachment:
         env['ir.attachment'].create({
             'name': menu.web_icon,
             'res_model': 'ir.ui.menu',

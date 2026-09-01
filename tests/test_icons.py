@@ -22,7 +22,7 @@ def _register(slug, tmp_path):
 
 def test_script_repairs_menu_icon_attachments():
     assert "ir.ui.menu" in icons.SCRIPT
-    assert "_filestore" in icons.SCRIPT
+    assert "web_icon_data" in icons.SCRIPT
     assert "'raw': data" in icons.SCRIPT
     assert "/mnt/extra-addons" in icons.SCRIPT
     assert "ODOOCTL_ICONS_OK=" in icons.SCRIPT

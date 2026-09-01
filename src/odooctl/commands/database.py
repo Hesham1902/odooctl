@@ -46,7 +46,8 @@ from .root import main
     help="Also download attachments. The default downloads only the database dump.",
 )
 @click.option("--yes", "-y", is_flag=True, help="Skip the overwrite confirmation.")
-def pull(project, from_, path, db, no_reset_admin, keep_download, key, save, with_filestore, yes):
+@click.option("--no-sanitize", is_flag=True, help="Skip database neutralization.")
+def pull(project, from_, path, db, no_reset_admin, keep_download, key, save, with_filestore, yes, no_sanitize):
     """Pull the latest backup over SSH and restore it."""
     need_docker()
     slug, project_entry = entry(project)
@@ -154,6 +155,16 @@ def pull(project, from_, path, db, no_reset_admin, keep_download, key, save, wit
             )
         except (compose.DockerError, RuntimeError) as exc:
             click.secho(f"[!] reset-admin failed: {exc}", fg="yellow")
+
+    if not no_sanitize:
+        click.echo(f"[{slug}] sanitizing (neutralizing) '{database}'...")
+        try:
+            counts = sanitize_mod.sanitize(project_entry["path"], project_entry, database)
+            for key, label in sanitize_mod.LABELS:
+                if counts.get(key):
+                    click.secho(f"[{slug}] {counts[key]:>6}  {label}", fg="green")
+        except (compose.DockerError, RuntimeError) as exc:
+            click.secho(f"[!] sanitize failed: {exc}", fg="yellow")
 
     if was_running:
         click.echo(f"[{slug}] starting web back...")
@@ -270,8 +281,11 @@ def fix_icons(project, db):
         f"{counts.get('unrepairable', 0)} without a source file.",
         fg="green",
     )
-    if counts.get("fixed"):
-        click.echo(f"[{slug}] restart web (`odooctl restart {slug}`) or hard-refresh the browser.")
+    if counts.get("fixed") or counts.get("unrepairable"):
+        click.echo(
+            f"[{slug}] restart web (`odooctl restart {slug}`) so it picks up the "
+            "repaired icons (they are cached in the server and the browser)."
+        )
 
 
 @main.command(section="Database")

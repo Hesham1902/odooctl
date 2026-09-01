@@ -298,7 +298,11 @@ def happy_pull(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.restore_mod, "restore", fake_restore)
     monkeypatch.setattr(cli.admin, "reset_admin", fake_reset)
     monkeypatch.setattr(cli.compose, "web_running", lambda p, e: True)
-    monkeypatch.setattr(cli.compose, "run", lambda path, *a, **kw: lifecycle.append(a) or FakeProc())
+    monkeypatch.setattr(
+        cli.compose,
+        "run",
+        lambda path, *a, **kw: lifecycle.append(a) or FakeProc(out=b"ODOOCTL_SANITIZE_OK={}\n"),
+    )
     return entry, zips, lifecycle
 
 
@@ -308,11 +312,12 @@ def test_pull_full_flow_downloads_restores_cleans(happy_pull, tmp_path, monkeypa
         cli.main, ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh", "-d", "acme_prod"]
     )
     assert result.exit_code == 0, result.output
-    # web stopped before restore, restarted after reset-admin
+    # web stopped before restore, sanitized, and restarted
     assert lifecycle[0] == ("stop", "web")
     assert lifecycle[1] == ("restore", "acme_prod")
     assert lifecycle[2] == "reset_admin"
-    assert lifecycle[3] == ("start", "web")
+    assert lifecycle[3][0] == "run"
+    assert lifecycle[4] == ("start", "web")
     assert not zips["local"].exists()  # cleaned up by default
     assert "cleaned up download" in result.output
 

@@ -34,6 +34,8 @@ COUNTS = {"crons_paused": 12, "mails_purged": 3, "emails_scrubbed": 500}
 
 def test_build_script_defaults_include_safety_steps():
     script = sanitize.build_script()
+    assert "neutralize" in script
+    assert "web.neutralize_banner" in script
     assert "ir.cron" in script
     assert "mail.mail" in script
     assert "_scrub('email')" in script
