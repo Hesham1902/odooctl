@@ -19,6 +19,7 @@ def write_compose(
     db_ports=(("5456", "5432"),),
     containers=("acme_web", "acme_db"),
     include_enterprise=True,
+    filename="docker-compose.yml",
 ):
     volumes = [
         "./home/odoo/.local/share/Odoo:/var/lib/odoo",
@@ -52,7 +53,7 @@ def write_compose(
         }
     }
     project_dir.mkdir(parents=True, exist_ok=True)
-    (project_dir / "docker-compose.yml").write_text(yaml.safe_dump(data))
+    (project_dir / filename).write_text(yaml.safe_dump(data))
     return project_dir
 
 

@@ -131,14 +131,21 @@ export PATH="$PWD/.venv/bin:$PATH"     # add this line to your ~/.zshrc or ~/.ba
 ## First run: discovering your projects
 
 ```bash
-odooctl discover                  # scan default roots
-odooctl discover --root ~/code    # scan additional folder(s)
+odooctl discover                        # scan saved roots + your current directory
+odooctl discover --root ~/code          # also scan (and remember) another folder
+odooctl discover --forget-root ~/old    # stop scanning a saved root
+odooctl discover -v                     # show every root and every compose file skipped
 ```
 
-`discover` walks your work folders looking for `docker-compose.yml` files whose
-services look like an Odoo setup (an Odoo web service + a Postgres service). Every hit
-is registered under a slug derived from its web container's name, e.g. container
-`acme_web` becomes project **`acme`**. The result looks like:
+`discover` walks your work folders, up to three folders deep, looking for compose files
+(`compose.yaml`, `compose.yml`, `docker-compose.yaml` or `docker-compose.yml`) whose
+services look like an Odoo setup: one service whose name, image, build or volumes mention
+`odoo`, plus one Postgres/PostGIS service. Every hit is registered under a slug derived
+from its web container's name, e.g. container `acme_web` becomes project **`acme`**.
+
+Your current directory is always scanned as well, so running `odooctl discover` from
+inside a project finds it. Only roots given with `--root` are remembered. The result
+looks like:
 
 ```
 Found 3 project(s):
@@ -148,6 +155,11 @@ gamma          /home/you/work/gamma             http:8056   pg:5456
 ```
 
 Nothing is started or modified by discovery - it only reads files.
+
+When nothing is found, `discover` prints what it looked at instead of a bare error:
+every root (`missing` or `scanned, N compose files`), every compose file it saw but
+rejected with the reason (too deep, no Odoo web service, no Postgres service, YAML
+error, duplicate slug), and a hint matching the situation.
 
 ```bash
 odooctl projects                  # list registered projects later
@@ -163,8 +175,9 @@ error listing them.
 - **Registry**: `~/.config/odooctl/config.json` maps slugs to project paths, service
   names, ports and detected Odoo version. See
   [Configuration file reference](#configuration-file-reference).
-- **Scan roots**: the folders `discover` searches. Defaults include common workspace
-  locations plus your current directory when nothing else is configured.
+- **Scan roots**: the folders `discover` searches, saved in the registry. Defaults are
+  `~/Developer/Work` and `~/odoo-projects`; add more with `--root`, drop them with
+  `--forget-root`. Your current directory is scanned every time but never saved.
 - **Image naming**: Docker Compose names built images `<folder>-<service>`
   (folder `acme` → image `acme-web`). `odooctl init` exploits this to reuse existing
   images instantly; see the [`init`](#init---bootstrapping-a-new-project) section.
@@ -842,7 +855,7 @@ location with the `ODOOCTL_HOME` environment variable (its value replaces
 
 ```jsonc
 {
-  "roots": ["/home/you/work"],          // where discover() scans
+  "roots": ["/home/you/work"],          // saved scan roots (cwd is scanned but never saved)
   "projects": {
     "acme": {
       "path": "/home/you/work/acme",
@@ -882,9 +895,14 @@ Everything else - commands, flags, behaviour, output - is identical on both syst
 Docker isn't running. macOS: launch Docker Desktop. Linux: `sudo systemctl start
 docker`. Then retry.
 
-**"No Odoo projects found under the scan roots"**
-Your projects aren't under the default roots. Point discovery at them:
-`odooctl discover --root ~/my-work`.
+**"No Odoo projects found"**
+Read the report printed under the error. A root marked `missing` does not exist on this
+machine; drop it with `odooctl discover --forget-root PATH`. A root with `0 compose files`
+does not contain your projects within three folders; add the folder directly above them
+with `odooctl discover --root ~/my-work`. A compose file listed under "rejected" was seen
+but did not look like Odoo; the reason next to it says what is missing (an `odoo` service,
+a Postgres service, valid YAML). Running `odooctl discover` from inside the project folder
+also works, since the current directory is always scanned.
 
 **`FATAL: database "<user>" does not exist`**
 You connected to psql without `-d`. PostgreSQL falls back to a database named after

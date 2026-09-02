@@ -11,10 +11,23 @@ class DockerError(RuntimeError):
     pass
 
 
+# Docker Compose's own lookup order when no -f is given.
+COMPOSE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
+
+
+def find_compose_file(project_dir):
+    """Return the compose file Docker itself would pick in this folder, or None."""
+    for name in COMPOSE_NAMES:
+        candidate = Path(project_dir) / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def _base(project_path: Path):
-    compose = Path(project_path) / "docker-compose.yml"
-    if not compose.is_file():
-        raise DockerError(f"No docker-compose.yml in {project_path}")
+    compose = find_compose_file(project_path)
+    if compose is None:
+        raise DockerError(f"No compose file ({' / '.join(COMPOSE_NAMES)}) in {project_path}")
     return ["docker", "compose", "-f", str(compose), "--project-directory", str(project_path)]
 
 

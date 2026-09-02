@@ -10,21 +10,77 @@ from .common import entry, need_docker, print_project_line, wait_http
 from .root import main
 
 
+def _format_report(report):
+    lines = ["Scan roots:"]
+    labels = {}
+    for root in report.roots:
+        labels[root] = f"{root} (cwd, not saved)" if root in report.ephemeral else root
+    width = max((len(label) for label in labels.values()), default=0)
+    for root, count in report.roots.items():
+        if count is None:
+            status = "missing"
+        else:
+            status = f"scanned, {count} compose file{'s' if count != 1 else ''}"
+        lines.append(f"  {labels[root]:<{width}}  {status}")
+    if report.rejected:
+        lines.append("Compose files seen but rejected:")
+        for path, reason in report.rejected:
+            lines.append(f"  {path}")
+            lines.append(f"      {reason}")
+    return "\n".join(lines)
+
+
+def _empty_hint(report):
+    depth = registry.MAX_PROJECT_DEPTH
+    names = " / ".join(compose.COMPOSE_NAMES)
+    if report.roots and len(report.missing_roots) == len(report.roots):
+        return (
+            "Hint: none of the scan roots exist. Add the folder that holds your projects: "
+            "`odooctl discover --root /path/to/projects`."
+        )
+    seen = report.compose_files_seen
+    if seen == 0:
+        return (
+            f"Hint: no compose files ({names}) under any root, up to {depth} folders deep. "
+            "Add the folder directly above your projects with `odooctl discover --root /path`."
+        )
+    return (
+        f"Hint: {seen} compose file{'s were' if seen != 1 else ' was'} found but none looked like an "
+        "Odoo project (need one service mentioning 'odoo' and one Postgres service) - see reasons "
+        f"above. Projects are matched up to {depth} folders below a root. "
+        "Drop stale roots with `odooctl discover --forget-root PATH`."
+    )
+
+
 @main.command(section="Project management")
-@click.option("--root", multiple=True, help="Extra directory to scan for projects.")
-def discover(root):
-    """(Re)scan your work folders for Odoo Docker projects."""
-    config = registry.refresh_registry(roots=root or None)
+@click.option("--root", multiple=True, help="Extra directory to scan for projects (saved).")
+@click.option("--forget-root", multiple=True, help="Stop scanning this saved root.")
+@click.option("--verbose", "-v", is_flag=True, help="Show every root scanned and every compose file skipped.")
+def discover(root, forget_root, verbose):
+    """(Re)scan your work folders for Odoo Docker projects.
+
+    The current directory is always scanned too, but only saved roots are remembered.
+    """
+    config, report = registry.refresh_registry(roots=root or None, forget=forget_root)
     projects = config["projects"]
     if not projects:
         raise click.ClickException(
-            "No Odoo projects found under the scan roots.\n"
-            f"Current roots: {', '.join(config.get('roots') or registry.default_roots())}\n"
-            "Hint: add yours with `odooctl discover --root /path/to/projects`."
+            "No Odoo projects found.\n" + _format_report(report) + "\n" + _empty_hint(report)
         )
+    if verbose:
+        click.echo(_format_report(report))
+        click.echo()
     click.echo(f"Found {len(projects)} project(s):")
     for slug, project_entry in sorted(projects.items()):
         print_project_line(slug, project_entry)
+    if report.rejected and not verbose:
+        count = len(report.rejected)
+        click.echo(
+            f"({count} compose file{'s' if count != 1 else ''} skipped - run `odooctl discover -v` to see why)"
+        )
+    for ephemeral in sorted(report.ephemeral):
+        if any(Path(p["path"]).is_relative_to(ephemeral) for p in projects.values()):
+            click.echo(f"Found under current directory; keep it with: odooctl discover --root {ephemeral}")
 
 
 @main.command("projects", section="Project management")

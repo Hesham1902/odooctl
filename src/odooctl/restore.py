@@ -217,11 +217,18 @@ def restore(project_path, entry, src: Path, db):
             replay_into = db
         skipped_ext: list[str] = []
         available = _available_extensions(project_path, entry)
-        compose.run_with_stdin_stream(
-            project_path,
-            ["exec", "-T", db_svc, "psql", "-U", user, "-d", replay_into, "-v", "ON_ERROR_STOP=1"],
-            _sql_chunks(gz, available=available, skipped=skipped_ext),
-        )
+        try:
+            compose.run_with_stdin_stream(
+                project_path,
+                ["exec", "-T", db_svc, "psql", "-U", user, "-d", replay_into, "-v", "ON_ERROR_STOP=1"],
+                _sql_chunks(gz, available=available, skipped=skipped_ext),
+            )
+        except (EOFError, OSError) as exc:
+            # A truncated/corrupt .sql.gz raises here (mid-stream, from gzip
+            # decompression) rather than as a DockerError. Left unwrapped this
+            # is an uncaught EOFError, which Click's main() turns into a bare
+            # "Aborted!" with no message and leaves the stopped web container down.
+            raise ValueError(f"backup file {gz.name} is corrupt or truncated: {exc}") from exc
         if dump_db and dump_db != db:
             _terminate_backends(project_path, entry, dump_db)
             compose.exec_service(

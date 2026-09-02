@@ -199,6 +199,35 @@ def test_restore_odoosh_raw_replays_sql_and_filestore(tmp_path, monkeypatch):
     assert tar_calls and "mkdir -p /var/lib/odoo/filestore/restored_db" in tar_calls[0][1][-1]
 
 
+def test_restore_odoosh_raw_wraps_truncated_gzip_as_value_error(tmp_path, monkeypatch):
+    import gzip
+
+    import pytest
+
+    d = tmp_path / "bundle"
+    d.mkdir()
+    gz = d / "dump.sql.gz"
+    with gzip.open(gz, "wt") as fh:
+        fh.write("-- a longer line so truncation lands mid-stream, not at EOF\nSELECT 1;\n")
+    gz.write_bytes(gz.read_bytes()[:12])  # cut before the end-of-stream marker
+
+    class FakeProc:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    def fake_stream(project_path, args, chunks):
+        return sum(len(c) for c in chunks)  # actually consumes the generator, like real usage
+
+    monkeypatch.setattr(restore.compose, "exec_service", lambda *a, **kw: FakeProc())
+    monkeypatch.setattr(restore.compose, "run_with_stdin_stream", fake_stream)
+    monkeypatch.setattr(restore, "_available_extensions", lambda p, e: None)
+
+    entry = {"services": {"web": "web", "db": "db"}, "db_user": "odoo"}
+    with pytest.raises(ValueError, match="corrupt or truncated"):
+        restore.restore("/proj", entry, d, "restored_db")
+
+
 def test_dump_create_target_detected():
 
     p = tmp_header_file(

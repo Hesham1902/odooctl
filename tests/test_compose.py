@@ -100,3 +100,27 @@ def test_run_with_stdin_stream_pumps_chunks_and_raises_on_error(tmp_path, monkey
     with pytest.raises(compose.DockerError) as exc:
         compose.run_with_stdin_stream(proj, ["exec", "-T", "db", "psql"], [b"junk\n"])
     assert "bad sql" in str(exc.value)
+
+
+def test_find_compose_file_uses_docker_precedence(tmp_path):
+    d = tmp_path / "proj"
+    d.mkdir()
+    assert compose.find_compose_file(d) is None
+    (d / "docker-compose.yml").write_text("services: {}")
+    assert compose.find_compose_file(d).name == "docker-compose.yml"
+    (d / "compose.yaml").write_text("services: {}")
+    assert compose.find_compose_file(d).name == "compose.yaml"
+
+
+def test_base_accepts_compose_yaml_and_explains_when_missing(tmp_path):
+    import pytest
+
+    d = tmp_path / "proj"
+    d.mkdir()
+    with pytest.raises(compose.DockerError) as exc:
+        compose._base(d)
+    assert "compose.yaml" in str(exc.value) and "docker-compose.yml" in str(exc.value)
+
+    (d / "compose.yaml").write_text("services: {}")
+    cmd = compose._base(d)
+    assert cmd[cmd.index("-f") + 1] == str(d / "compose.yaml")

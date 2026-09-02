@@ -199,6 +199,8 @@ def test_download_skips_filestore_by_default(tmp_path, monkeypatch):
 
 
 def test_download_reuses_cached_sql_gz(tmp_path, monkeypatch):
+    import gzip
+
     scp_calls = []
 
     def fake_run(cmd, capture_output=True):
@@ -210,11 +212,85 @@ def test_download_reuses_cached_sql_gz(tmp_path, monkeypatch):
     monkeypatch.setattr(pull.subprocess, "run", fake_run)
     bundle = tmp_path / "acme"
     bundle.mkdir()
-    (bundle / "acme.sql.gz").write_bytes(b"already here")
+    with gzip.open(bundle / "acme.sql.gz", "wt") as fh:
+        fh.write("already here")
 
     out = pull.download("u@h", None, {"sql_gz": "/b/acme.sql.gz", "mirror": None}, tmp_path)
     assert not scp_calls
-    assert (out / "acme.sql.gz").read_bytes() == b"already here"
+    with gzip.open(out / "acme.sql.gz", "rt") as fh:
+        assert fh.read() == "already here"
+
+
+def test_download_reuses_cache_via_remote_size_match_without_decompressing(tmp_path, monkeypatch):
+    scp_calls = []
+
+    def fake_run(cmd, capture_output=True):
+        if cmd[0] == "scp":
+            scp_calls.append(cmd)
+            return FakeProc(rc=1, err=b"should not be called")
+        if "stat -c%s" in cmd[-1]:
+            return FakeProc(out=b"11\n")
+        return FakeProc(out=b"no\n")
+
+    monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    bundle = tmp_path / "acme"
+    bundle.mkdir()
+    # not valid gzip at all - proves the size-match path skips the expensive
+    # decompress check rather than falling back to it
+    (bundle / "acme.sql.gz").write_bytes(b"not-gzip-11")
+
+    out = pull.download("u@h", None, {"sql_gz": "/b/acme.sql.gz", "mirror": None}, tmp_path)
+    assert not scp_calls
+    assert (out / "acme.sql.gz").read_bytes() == b"not-gzip-11"
+
+
+def test_download_redownloads_when_remote_size_mismatches_cache(tmp_path, monkeypatch):
+    scp_calls = []
+
+    def fake_run(cmd, capture_output=True):
+        if cmd[0] == "scp":
+            scp_calls.append(cmd)
+            Path(cmd[-1]).write_bytes(b"fresh good data")
+            return FakeProc()
+        if "stat -c%s" in cmd[-1]:
+            return FakeProc(out=b"999\n")  # remote is a different size than the cache
+        return FakeProc(out=b"no\n")
+
+    monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    bundle = tmp_path / "acme"
+    bundle.mkdir()
+    (bundle / "acme.sql.gz").write_bytes(b"stale cached data")
+
+    out = pull.download("u@h", None, {"sql_gz": "/b/acme.sql.gz", "mirror": None}, tmp_path)
+    assert len(scp_calls) == 1
+    assert (out / "acme.sql.gz").read_bytes() == b"fresh good data"
+
+
+def test_download_redownloads_when_cache_is_truncated(tmp_path, monkeypatch):
+    import gzip
+
+    scp_calls = []
+
+    def fake_run(cmd, capture_output=True):
+        if cmd[0] == "scp":
+            scp_calls.append(cmd)
+            Path(cmd[-1]).write_bytes(b"fresh good data")
+            return FakeProc()
+        return FakeProc(out=b"no\n")
+
+    monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    bundle = tmp_path / "acme"
+    bundle.mkdir()
+    cached = bundle / "acme.sql.gz"
+    with gzip.open(cached, "wt") as fh:
+        fh.write("a fully compressed line that will get cut off before the end")
+    # simulate an interrupted scp: truncate past the gzip header, before the
+    # end-of-stream marker/CRC trailer
+    cached.write_bytes(cached.read_bytes()[:10])
+
+    out = pull.download("u@h", None, {"sql_gz": "/b/acme.sql.gz", "mirror": None}, tmp_path)
+    assert len(scp_calls) == 1
+    assert (out / "acme.sql.gz").read_bytes() == b"fresh good data"
 
 
 def test_download_failure_raises(tmp_path, monkeypatch):

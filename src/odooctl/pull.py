@@ -1,3 +1,4 @@
+import gzip
 import shutil
 import subprocess
 import time
@@ -190,6 +191,45 @@ def remote_dir_size(target, port, path, key=None):
     return f"{mb / 1000:.1f} GB" if mb >= 1000 else f"{mb} MB"
 
 
+def _is_complete_gzip(path: Path) -> bool:
+    """A partial/aborted scp leaves a truncated file that gzip can't fully decode.
+
+    Reusing it silently feeds garbage into psql later, so verify the stream
+    actually decompresses to its end-of-stream marker before trusting the cache.
+    Full decompression is the expensive fallback for when we can't just compare
+    sizes with the remote (see _remote_file_size) - it pays for itself only once,
+    right after a fresh download, or when the remote size can't be read.
+    """
+    try:
+        with gzip.open(path, "rb") as fh:
+            while fh.read(1 << 20):
+                pass
+        return True
+    except (OSError, EOFError):
+        return False
+
+
+def _remote_file_size(target, port, path, key=None):
+    """Size in bytes of `path` on the remote, or None if it can't be read."""
+    proc = subprocess.run(
+        _ssh_cmd(target, port, f"stat -c%s '{path}' 2>/dev/null || stat -f%z '{path}' 2>/dev/null", key=key),
+        capture_output=True,
+    )
+    out = proc.stdout.decode(errors="replace").strip()
+    return int(out) if out.isdigit() else None
+
+
+def _cached_sql_gz_is_reusable(target, port, remote, local_sql, key=None):
+    """Cheap first: does the cache match the remote's size? Only pay for a full
+    gzip decompress when the remote size can't be determined over SSH."""
+    if not (local_sql.exists() and local_sql.stat().st_size > 0):
+        return False
+    remote_size = _remote_file_size(target, port, remote["sql_gz"], key=key)
+    if remote_size is not None:
+        return remote_size == local_sql.stat().st_size
+    return _is_complete_gzip(local_sql)
+
+
 def download(target, port, remote, dest_dir, key=None, with_filestore=False):
     """Download an odooctl/odoo.sh raw backup into dest_dir/<base>/ as a bundle.
 
@@ -204,9 +244,12 @@ def download(target, port, remote, dest_dir, key=None, with_filestore=False):
     bundle.mkdir(parents=True, exist_ok=True)
 
     local_sql = bundle / name
-    if local_sql.exists() and local_sql.stat().st_size > 0:
+    if _cached_sql_gz_is_reusable(target, port, remote, local_sql, key=key):
         print(f"reusing cached {name} ({_fmt_mb(local_sql.stat().st_size)})")
     else:
+        if local_sql.exists():
+            print(f"cached {name} is incomplete or corrupt, re-downloading")
+            local_sql.unlink()
         proc = subprocess.run(
             _scp_cmd(target, port, remote["sql_gz"], local_sql, key=key), capture_output=True
         )
