@@ -16,11 +16,18 @@ COMPOSE_NAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-c
 
 
 def find_compose_file(project_dir):
-    """Return the compose file Docker itself would pick in this folder, or None."""
+    """Return the compose file Docker itself would pick in this folder, or None.
+
+    Unreadable folders (e.g. root-owned bind-mount data dirs) count as "no compose
+    file" instead of raising: the scanner probes folders it cannot enter.
+    """
     for name in COMPOSE_NAMES:
         candidate = Path(project_dir) / name
-        if candidate.is_file():
-            return candidate
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
     return None
 
 

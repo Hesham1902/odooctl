@@ -1,3 +1,8 @@
+import os
+import pathlib
+
+import pytest
+
 from odooctl import compose
 
 
@@ -110,6 +115,38 @@ def test_find_compose_file_uses_docker_precedence(tmp_path):
     assert compose.find_compose_file(d).name == "docker-compose.yml"
     (d / "compose.yaml").write_text("services: {}")
     assert compose.find_compose_file(d).name == "compose.yaml"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+def test_find_compose_file_returns_none_for_unreadable_dir(tmp_path):
+    # Bind-mount data folders owned by root: on Python <=3.12, stat() on the
+    # candidates raises EACCES instead of returning False.
+    d = tmp_path / "locked"
+    d.mkdir()
+    (d / "compose.yaml").write_text("services: {}")
+    d.chmod(0)
+    try:
+        assert compose.find_compose_file(d) is None
+    finally:
+        d.chmod(0o700)
+
+
+def test_find_compose_file_skips_inaccessible_candidates(tmp_path, monkeypatch):
+    # Same bug without depending on Python's pathlib version: an EACCES on one
+    # candidate must not abort the lookup of the remaining names.
+    d = tmp_path / "proj"
+    d.mkdir()
+    (d / "compose.yaml").write_text("services: {}")
+    (d / "docker-compose.yml").write_text("services: {}")
+    real_is_file = pathlib.Path.is_file
+
+    def raising_is_file(self):
+        if self.name == "compose.yaml":
+            raise PermissionError(13, "Permission denied")
+        return real_is_file(self)
+
+    monkeypatch.setattr(pathlib.Path, "is_file", raising_is_file)
+    assert compose.find_compose_file(d).name == "docker-compose.yml"
 
 
 def test_base_accepts_compose_yaml_and_explains_when_missing(tmp_path):

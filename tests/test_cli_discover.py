@@ -1,5 +1,8 @@
 import json
+import os
+import pathlib
 
+import pytest
 from click.testing import CliRunner
 from conftest import write_compose
 
@@ -105,3 +108,30 @@ def test_discover_finds_project_in_cwd_without_saving_it(tmp_path, monkeypatch):
     assert f"keep it with: odooctl discover --root {proj.resolve()}" in result.output
     assert _config()["roots"] == []
     assert _config()["projects"]["acme"]["path"] == str(proj.resolve())
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+def test_discover_survives_unreadable_data_dirs(tmp_path, monkeypatch):
+    # Issue #1: stat() on compose candidates inside a root-owned bind-mount
+    # data folder raised PermissionError (Python <=3.12 pathlib) and killed the
+    # whole scan. Simulated via monkeypatch so it reproduces on every Python.
+    monkeypatch.setattr(registry, "default_roots", lambda: [])
+    monkeypatch.chdir(tmp_path)
+    work = tmp_path / "work"
+    write_compose(work / "proj")
+    locked = work / "one" / "two" / "three" / "data"
+    (locked / "postgres").mkdir(parents=True)
+    real_is_file = pathlib.Path.is_file
+
+    def raising_is_file(self):
+        if locked in self.parents:
+            raise PermissionError(13, "Permission denied")
+        return real_is_file(self)
+
+    monkeypatch.setattr(pathlib.Path, "is_file", raising_is_file)
+
+    result = _run("--root", str(work))
+
+    assert result.exit_code == 0, result.output
+    assert "Found 1 project(s):" in result.output
+    assert "acme" in result.output
