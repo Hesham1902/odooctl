@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from click.testing import CliRunner
@@ -34,6 +35,88 @@ def test_load_project_status_reports_running_containers(monkeypatch, tmp_path):
     monkeypatch.setattr(compose, "ps", lambda path: [{"State": "running"}])
 
     assert gui.load_project_status()[0].state == "Running"
+
+
+def test_run_project_action_uses_the_registered_web_service(monkeypatch, tmp_path):
+    project = _project(tmp_path)
+    monkeypatch.setattr(registry, "resolve", lambda slug: (slug, project))
+    monkeypatch.setattr(compose, "daemon_available", lambda: True)
+
+    class Result:
+        stdout = b"container started"
+        stderr = b""
+
+    seen = {}
+
+    def fake_run(path, *args, **kwargs):
+        seen["path"] = path
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr(compose, "run", fake_run)
+
+    result = gui.run_project_action("acme", "restart")
+
+    assert result == gui.ProjectActionResult("acme", "restart", "container started")
+    assert seen == {
+        "path": str(tmp_path),
+        "args": ("restart", "web"),
+        "kwargs": {"timeout": gui.ACTION_TIMEOUT},
+    }
+
+
+def test_run_project_action_requires_docker(monkeypatch, tmp_path):
+    monkeypatch.setattr(registry, "resolve", lambda slug: (slug, _project(tmp_path)))
+    monkeypatch.setattr(compose, "daemon_available", lambda: False)
+
+    with pytest.raises(compose.DockerError, match="Start Docker Desktop"):
+        gui.run_project_action("acme", "logs")
+
+
+def test_run_project_action_waits_for_odoo_after_start(monkeypatch, tmp_path):
+    project = _project(tmp_path)
+    monkeypatch.setattr(registry, "resolve", lambda slug: (slug, project))
+    monkeypatch.setattr(compose, "daemon_available", lambda: True)
+    monkeypatch.setattr(gui, "wait_http", lambda port, timeout: True)
+
+    class Result:
+        stdout = b"started"
+        stderr = b""
+
+    monkeypatch.setattr(compose, "run", lambda *args, **kwargs: Result())
+
+    result = gui.run_project_action("acme", "up")
+
+    assert "ready at http://localhost:8069" in result.output
+
+
+def test_rescan_projects_returns_scan_diagnostics(monkeypatch, tmp_path):
+    rows = (gui.ProjectStatus("acme", str(tmp_path), "Down", "8069", "5432", "No containers"),)
+    report = SimpleNamespace(roots={str(tmp_path): 1}, rejected=[("bad.yml", "invalid")])
+    seen = {}
+
+    def fake_refresh_registry(roots):
+        seen["roots"] = roots
+        return {"roots": [str(tmp_path)]}, report
+
+    monkeypatch.setattr(registry, "refresh_registry", fake_refresh_registry)
+    monkeypatch.setattr(gui, "load_project_status", lambda: list(rows))
+
+    result = gui.rescan_projects((str(tmp_path),))
+
+    assert result == gui.ProjectScanResult(rows, (str(tmp_path),), 1)
+    assert seen == {"roots": (str(tmp_path),)}
+
+
+def test_open_project_uses_detected_http_port(monkeypatch, tmp_path):
+    project = _project(tmp_path)
+    monkeypatch.setattr(registry, "resolve", lambda slug: (slug, project))
+    opened = []
+    monkeypatch.setattr(gui.webbrowser, "open", opened.append)
+
+    assert gui.open_project("acme") == ("acme", "http://localhost:8069")
+    assert opened == ["http://localhost:8069"]
 
 
 def test_gui_command_explains_optional_dependency(monkeypatch):

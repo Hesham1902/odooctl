@@ -34,7 +34,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install app dependencies
-        run: python -m pip install -e ".[gui]" pyinstaller
+        run: python -m pip install -e ".[dev,gui]" pyinstaller
+
+      - name: Run tests
+        run: |
+          ruff check src tests
+          pytest -q
 
       - name: Build app bundle
         run: >-
@@ -43,16 +48,38 @@ jobs:
           --clean
           --windowed
           --name Odooctl
+          --osx-bundle-identifier com.hesham.odooctl
           --paths src
           --hidden-import PySide6.QtCore
           --hidden-import PySide6.QtGui
           --hidden-import PySide6.QtWidgets
           src/odooctl/gui_app.py
 
+      - name: Set app metadata
+        run: |
+          app_version="$(python -c 'from odooctl import __version__; print(__version__)')"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${app_version}" dist/Odooctl.app/Contents/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${app_version}" dist/Odooctl.app/Contents/Info.plist
+          codesign --force --deep --sign - dist/Odooctl.app
+          codesign --verify --deep --strict dist/Odooctl.app
+
       - name: Archive app
         run: |
           ditto -c -k --sequesterRsrc --keepParent dist/Odooctl.app "dist/odooctl-macos-${{ matrix.arch }}.zip"
           shasum -a 256 "dist/odooctl-macos-${{ matrix.arch }}.zip" > "dist/odooctl-macos-${{ matrix.arch }}.sha256"
+
+      - name: Build installer disk image
+        run: |
+          mkdir -p dist/dmg-root
+          cp -R dist/Odooctl.app dist/dmg-root/Odooctl.app
+          ln -s /Applications dist/dmg-root/Applications
+          hdiutil create \
+            -volname "odooctl" \
+            -srcfolder dist/dmg-root \
+            -ov \
+            -format UDZO \
+            "dist/odooctl-macos-${{ matrix.arch }}.dmg"
+          shasum -a 256 "dist/odooctl-macos-${{ matrix.arch }}.dmg" > "dist/odooctl-macos-${{ matrix.arch }}.dmg.sha256"
 
       - name: Resolve release tag
         id: release
@@ -69,7 +96,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "${{ steps.release.outputs.tag }}" >/dev/null 2>&1 || \
-            gh release create "${{ steps.release.outputs.tag }}" --title "${{ steps.release.outputs.tag }}" --generate-notes
+            gh release create "${{ steps.release.outputs.tag }}" --title "${{ steps.release.outputs.tag }}" --generate-notes || \
+            gh release view "${{ steps.release.outputs.tag }}" >/dev/null
 
       - name: Upload app
         env:
@@ -79,4 +107,6 @@ jobs:
           "${{ steps.release.outputs.tag }}"
           "dist/odooctl-macos-${{ matrix.arch }}.zip"
           "dist/odooctl-macos-${{ matrix.arch }}.sha256"
+          "dist/odooctl-macos-${{ matrix.arch }}.dmg"
+          "dist/odooctl-macos-${{ matrix.arch }}.dmg.sha256"
           --clobber

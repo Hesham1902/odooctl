@@ -135,28 +135,38 @@ reads it dynamically), and it is what the update check compares against.
 
 The public site lives in `website/` and deploys with `.github/workflows/pages.yml`.
 Enable **Settings -> Pages -> GitHub Actions** once in the repository. The macOS
-release workflow builds separate Apple Silicon and Intel `.zip` files whenever a
+release workflow builds separate Apple Silicon and Intel `.dmg` installers whenever a
 `v*` tag is pushed:
 
 ```bash
-git tag v0.5.0
-git push origin v0.5.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
-The files are uploaded to the GitHub Release automatically. The website downloads
-the latest matching archive from that release.
+The installers are uploaded to the GitHub Release automatically. Open the DMG and
+drag odooctl to Applications. The website downloads the latest matching installer
+from that release. Zip archives remain available for scripted extraction.
 
 ### macOS
 
-1. Install **Docker Desktop** (https://www.docker.com/products/docker-desktop/) if you
+1. Download the matching DMG from the product website, open it, and drag `Odooctl.app`
+   to Applications.
+2. Install **Docker Desktop** (https://www.docker.com/products/docker-desktop/) if you
    haven't already, launch it once, and wait until the whale icon shows
    "running".
-2. Check: `docker compose version`
-3. Install the CLI with any method above.
+3. Check: `docker compose version`
+4. Launch odooctl, then use **Rescan** or **Add Folder** to register the parent folder
+   that contains your Odoo projects.
 
-The first GUI scaffold lists registered projects and refreshes their Docker status
-in a background worker. It is intentionally a thin window over the existing CLI
-backend, not a second Docker implementation.
+The first DMG release is not signed or notarized yet. macOS may show a security warning
+on first launch. Use the app's contextual **Open** action once, or approve it in
+System Settings -> Privacy & Security. Signing and notarization require an Apple
+Developer account and will be added before distributing beyond trusted testers.
+
+The desktop app lists projects, refreshes Docker status, starts and stops stacks,
+restarts the web service, shows recent logs, and opens the local Odoo URL. It is a
+thin window over the existing CLI backend, not a second Docker implementation. The
+CLI remains a separate install for scripts and CI.
 
 ### Windows
 
