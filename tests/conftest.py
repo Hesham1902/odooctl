@@ -8,6 +8,7 @@ import yaml
 def isolated_config(tmp_path, monkeypatch):
     home = tmp_path / "odoocfg"
     monkeypatch.setenv("ODOOCTL_HOME", str(home))
+    monkeypatch.setenv("ODOOCTL_NO_UPDATE_CHECK", "1")
     yield home
 
 

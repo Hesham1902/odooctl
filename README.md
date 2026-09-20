@@ -103,6 +103,27 @@ python3 -m venv .venv
 export PATH="$PWD/.venv/bin:$PATH"     # add this line to your ~/.zshrc or ~/.bashrc
 ```
 
+### Update notices
+
+`odooctl` checks once a day whether a newer version is on GitHub. When your copy
+is behind, commands start with a yellow note like:
+
+```
+odooctl 0.5.0 is available (you have 0.4.0).
+Update: cd /path/to/odooctl && git pull, then reinstall if you used pipx/uv.
+```
+
+The check fetches one small file, times out after 3 seconds, and never breaks or
+slows down a command when the network is unavailable. Disable it with:
+
+```bash
+export ODOOCTL_NO_UPDATE_CHECK=1
+```
+
+To ship a new version, bump `__version__` in `src/odooctl/__init__.py` and push
+to `main` - that file is the single source of truth for the version (pyproject
+reads it dynamically), and it is what the update check compares against.
+
 ### macOS
 
 1. Install **Docker Desktop** (https://www.docker.com/products/docker-desktop/) if you

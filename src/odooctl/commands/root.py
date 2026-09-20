@@ -3,6 +3,9 @@ from collections import defaultdict
 
 import click
 
+from .. import __version__
+from .. import update as update_mod
+
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 SECTION_ORDER = (
     "Project management",
@@ -80,7 +83,7 @@ class SectionedGroup(click.Group):
 
 
 @click.group(cls=SectionedGroup, context_settings=CONTEXT_SETTINGS)
-@click.version_option(package_name="odooctl", prog_name="odooctl")
+@click.version_option(version=__version__, prog_name="odooctl")
 @click.option("--debug", is_flag=True, help="Show operation timings for troubleshooting.")
 @click.pass_context
 def main(ctx, debug):
@@ -88,3 +91,6 @@ def main(ctx, debug):
     ctx.ensure_object(dict)
     ctx.obj["debug"] = debug
     ctx.obj.setdefault("timings", [])
+    latest = update_mod.check_for_update()
+    if latest:
+        click.secho(update_mod.update_notice(latest), fg="yellow", err=True)

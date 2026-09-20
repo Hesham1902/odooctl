@@ -1,6 +1,6 @@
 [project]
 name = "odooctl"
-version = "0.3.0"
+dynamic = ["version"]
 description = "One CLI for your local Odoo docker environments"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,6 +25,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/odooctl"]
+
+[tool.hatch.version]
+path = "src/odooctl/__init__.py"
 
 [tool.ruff]
 line-length = 110
