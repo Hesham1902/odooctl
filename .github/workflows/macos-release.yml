@@ -1,0 +1,82 @@
+name: Build macOS app
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach builds to
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install app dependencies
+        run: python -m pip install -e ".[gui]" pyinstaller
+
+      - name: Build app bundle
+        run: >-
+          python -m PyInstaller
+          --noconfirm
+          --clean
+          --windowed
+          --name Odooctl
+          --paths src
+          --hidden-import PySide6.QtCore
+          --hidden-import PySide6.QtGui
+          --hidden-import PySide6.QtWidgets
+          src/odooctl/gui_app.py
+
+      - name: Archive app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent dist/Odooctl.app "dist/odooctl-macos-${{ matrix.arch }}.zip"
+          shasum -a 256 "dist/odooctl-macos-${{ matrix.arch }}.zip" > "dist/odooctl-macos-${{ matrix.arch }}.sha256"
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create release if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ steps.release.outputs.tag }}" >/dev/null 2>&1 || \
+            gh release create "${{ steps.release.outputs.tag }}" --title "${{ steps.release.outputs.tag }}" --generate-notes
+
+      - name: Upload app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload
+          "${{ steps.release.outputs.tag }}"
+          "dist/odooctl-macos-${{ matrix.arch }}.zip"
+          "dist/odooctl-macos-${{ matrix.arch }}.sha256"
+          --clobber

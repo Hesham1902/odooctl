@@ -10,7 +10,7 @@ code changes, to pulling the latest backup over SSH, restoring Odoo.sh backups s
 (crons paused, mail purged), bootstrapping brand-new projects in seconds, and running
 addon tests in throwaway databases.
 
-Works on **macOS** and **Linux**.
+Works on **macOS**, **Linux**, and **Windows**.
 
 ---
 
@@ -19,7 +19,7 @@ Works on **macOS** and **Linux**.
 **Getting started**
 
 1. [Requirements](#requirements)
-2. [Installation](#installation) - [macOS](#macos) · [Linux](#linux)
+2. [Installation](#installation) - [macOS](#macos) · [Linux](#linux) · [Windows](#windows)
 3. [First run: discovering projects](#first-run-discovering-your-projects)
 4. [Core concepts](#core-concepts)
 
@@ -66,14 +66,14 @@ Works on **macOS** and **Linux**.
   `docker-compose.yml` (a `web` service and a `db` service), `custom_addons/`,
   and `config/odoo.conf`.
 
-> **Note:** Windows is not supported directly. If you develop inside **WSL2**, follow
-> the Linux instructions.
+> Windows is supported with Docker Desktop and its WSL2 backend. Native Windows
+> paths, SSH/SCP backup pulls, and the desktop GUI are supported. See the Windows
+> section below.
 
 ## Installation
 
-Both platforms install the same way - pick one of the three methods below. The only
-real difference between macOS and Linux is getting Docker itself running (see the
-per-platform sections).
+Install the CLI with one of the methods below. The commands differ slightly between
+Unix shells and PowerShell.
 
 ### Method 1: pipx (recommended)
 
@@ -103,6 +103,13 @@ python3 -m venv .venv
 export PATH="$PWD/.venv/bin:$PATH"     # add this line to your ~/.zshrc or ~/.bashrc
 ```
 
+For the optional desktop window, install the `gui` extra:
+
+```bash
+python3 -m pip install -e ".[gui]"
+odooctl gui
+```
+
 ### Update notices
 
 `odooctl` checks once a day whether a newer version is on GitHub. When your copy
@@ -124,6 +131,21 @@ To ship a new version, bump `__version__` in `src/odooctl/__init__.py` and push
 to `main` - that file is the single source of truth for the version (pyproject
 reads it dynamically), and it is what the update check compares against.
 
+### Product website and releases
+
+The public site lives in `website/` and deploys with `.github/workflows/pages.yml`.
+Enable **Settings -> Pages -> GitHub Actions** once in the repository. The macOS
+release workflow builds separate Apple Silicon and Intel `.zip` files whenever a
+`v*` tag is pushed:
+
+```bash
+git tag v0.5.0
+git push origin v0.5.0
+```
+
+The files are uploaded to the GitHub Release automatically. The website downloads
+the latest matching archive from that release.
+
 ### macOS
 
 1. Install **Docker Desktop** (https://www.docker.com/products/docker-desktop/) if you
@@ -131,6 +153,36 @@ reads it dynamically), and it is what the update check compares against.
    "running".
 2. Check: `docker compose version`
 3. Install the CLI with any method above.
+
+The first GUI scaffold lists registered projects and refreshes their Docker status
+in a background worker. It is intentionally a thin window over the existing CLI
+backend, not a second Docker implementation.
+
+### Windows
+
+1. Install **Docker Desktop** with the **WSL2 backend** and make sure Docker Desktop
+   is running: https://docs.docker.com/desktop/setup/install/windows-install/
+2. Install Python 3.10 or newer, Git, and the Windows OpenSSH Client. Check the
+   external tools from PowerShell:
+   ```powershell
+   docker compose version
+   ssh -V
+   scp -V
+   ```
+3. Install the CLI from PowerShell:
+   ```powershell
+   py -m venv .venv
+   .\.venv\Scripts\python -m pip install -e .
+   ```
+4. Install the optional GUI extra if needed:
+   ```powershell
+   .\.venv\Scripts\python -m pip install -e ".[gui]"
+   ```
+
+`odooctl pull` uses the Windows OpenSSH `ssh` and `scp` clients. Filestore archives
+are extracted by Python, so Windows does not need a Unix shell or a local tar
+pipeline. If Docker Desktop is installed but the daemon is stopped, commands report
+that directly instead of failing with a platform-specific subprocess error.
 
 ### Linux
 

@@ -19,10 +19,13 @@ def _config_file():
 
 def default_roots():
     """Static roots persisted on first run. The current directory is scanned, never saved."""
-    return [
-        str(Path.home() / "Developer" / "Work"),
-        str(Path.home() / "odoo-projects"),
-    ]
+    home = Path.home()
+    candidates = (
+        home / "Developer" / "Work",
+        home / "odoo-projects",
+        home / "Documents" / "odoo-projects",
+    )
+    return list(dict.fromkeys(str(path) for path in candidates))
 
 
 def normalize_root(root):

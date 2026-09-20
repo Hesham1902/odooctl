@@ -16,7 +16,7 @@ from . import restore as restore_mod
 from . import sanitize as sanitize_mod
 
 # Importing each family registers its commands on ``root.main``.
-from .commands import common, database, development, projects, root, runtime, storage  # noqa: F401
+from .commands import common, database, desktop, development, projects, root, runtime, storage  # noqa: F401
 from .manifest import list_addons
 
 CONTEXT_SETTINGS = root.CONTEXT_SETTINGS

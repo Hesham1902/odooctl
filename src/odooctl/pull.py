@@ -2,6 +2,7 @@ import gzip
 import shlex
 import shutil
 import subprocess
+import tarfile
 import time
 from pathlib import Path
 
@@ -41,27 +42,29 @@ def _fmt_mb(n):
     return f"{n / 1e6:.1f} MB"
 
 
-class _ProgressPipe:
-    """Pass bytes stdin->dst while printing a running total on one line."""
+class _ProgressReader:
+    """Read a stream while printing a running byte total on one line."""
 
-    def __init__(self, label="downloading"):
+    def __init__(self, src, label="downloading"):
+        self.src = src
         self.label = label
         self.total = 0
         self._start = time.monotonic()
         self._last_render = 0.0
 
-    def pump(self, src, dst, chunk=1 << 20):
-        while True:
-            block = src.read(chunk)
-            if not block:
-                break
-            dst.write(block)
-            self.total += len(block)
-            now = time.monotonic()
-            if now - self._last_render > 0.2:
-                self._last_render = now
-                rate = self.total / max(now - self._start, 1e-9) / 1e6
-                print(f"\r{self.label}: {_fmt_mb(self.total)} ({rate:.1f} MB/s)   ", end="", flush=True)
+    def read(self, size=-1):
+        block = self.src.read(size)
+        if not block:
+            return block
+        self.total += len(block)
+        now = time.monotonic()
+        if now - self._last_render > 0.2:
+            self._last_render = now
+            rate = self.total / max(now - self._start, 1e-9) / 1e6
+            print(f"\r{self.label}: {_fmt_mb(self.total)} ({rate:.1f} MB/s)   ", end="", flush=True)
+        return block
+
+    def finish(self):
         print(f"\r{self.label}: {_fmt_mb(self.total)} done" + " " * 20, flush=True)
 
 
@@ -113,23 +116,30 @@ def _scp_cmd(target, port, remote_path, local_path, key=None, legacy=False):
     return [*args, f"{target}:{remote_path}", str(local_path)]
 
 
-def _retry_transient(run_fn):
+def _retry_transient(run_fn, executable):
     """Re-run run_fn while the remote transiently rejects the exec request."""
-    proc = run_fn()
+    try:
+        proc = run_fn()
+    except FileNotFoundError as exc:
+        raise PullError(f"{executable} was not found on PATH. Install it and try again.") from exc
     for _ in range(_SSH_ATTEMPTS - 1):
         if proc.returncode == 0:
             break
         if _TRANSIENT_EXEC_ERROR not in (proc.stderr or b"").decode(errors="replace"):
             break
         time.sleep(_SSH_RETRY_DELAY)
-        proc = run_fn()
+        try:
+            proc = run_fn()
+        except FileNotFoundError as exc:
+            raise PullError(f"{executable} was not found on PATH. Install it and try again.") from exc
     return proc
 
 
 def _ssh_exec(target, port, command, key=None):
     """One remote command over SSH, retrying odoo.sh's transient exec rejections."""
     return _retry_transient(
-        lambda: subprocess.run(_ssh_cmd(target, port, command, key=key), capture_output=True)
+        lambda: subprocess.run(_ssh_cmd(target, port, command, key=key), capture_output=True),
+        "ssh",
     )
 
 
@@ -221,37 +231,40 @@ def find_remote_backup(target, port=None, path=None, key=None):
 
 
 def _stream_remote_tar(target, port, remote_dir, remote_sub, dest: Path, key=None, progress=True):
-    """ssh 'tar -C <dir> -czf - <sub>' piped into a local tar extraction."""
-    src = subprocess.Popen(
-        _ssh_cmd(target, port, f"tar -C {remote_dir} -czf - {remote_sub}", key=key),
-        stdout=subprocess.PIPE,
-    )
-    dst = subprocess.Popen(
-        ["tar", "-xzf", "-", "-C", str(dest)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    pipe = _ProgressPipe(label="filestore") if progress else None
+    """Extract a remote tar stream with Python so Windows needs no local tar."""
+    src = None
     try:
-        if pipe:
-            pipe.pump(src.stdout, dst.stdin)
-        else:
-            while True:
-                block = src.stdout.read(1 << 20)
-                if not block:
-                    break
-                dst.stdin.write(block)
+        src = subprocess.Popen(
+            _ssh_cmd(target, port, f"tar -C {remote_dir} -czf - {remote_sub}", key=key),
+            stdout=subprocess.PIPE,
+        )
+    except FileNotFoundError as exc:
+        raise PullError(f"{exc.filename} was not found on PATH. Install it and try again.") from exc
+    reader = _ProgressReader(src.stdout, label="filestore") if progress else src.stdout
+    root = dest.resolve()
+    failure = None
+    try:
+        with tarfile.open(fileobj=reader, mode="r|gz") as archive:
+            for member in archive:
+                target_path = (dest / member.name).resolve()
+                if not target_path.is_relative_to(root):
+                    raise PullError(f"Remote archive contains an unsafe path: {member.name}")
+                if member.issym() or member.islnk():
+                    link_path = (target_path.parent / member.linkname).resolve()
+                    if not link_path.is_relative_to(root):
+                        raise PullError(f"Remote archive contains an unsafe link: {member.name}")
+                archive.extract(member, path=dest)
+    except (OSError, tarfile.TarError, PullError) as exc:
+        failure = exc
     finally:
-        try:
-            dst.stdin.close()
-        except BrokenPipeError:
-            pass
         src.stdout.close()
-    dst_rc = dst.wait()
     src_rc = src.wait()
-    if dst_rc != 0 or src_rc != 0:
-        raise PullError(f"Streaming '{remote_sub}' from remote failed (ssh rc={src_rc}, tar rc={dst_rc}).")
+    if progress:
+        reader.finish()
+    if failure:
+        raise PullError(f"Streaming '{remote_sub}' from remote failed: {failure}") from failure
+    if src_rc != 0:
+        raise PullError(f"Streaming '{remote_sub}' from remote failed (ssh rc={src_rc}).")
 
 
 def remote_dir_size(target, port, path, key=None):
@@ -334,9 +347,9 @@ def download(target, port, remote, dest_dir, key=None, with_filestore=False):
                 capture_output=True,
             )
 
-        proc = _retry_transient(_attempt)
+        proc = _retry_transient(_attempt, "scp")
         if proc.returncode != 0 and b"subsystem request failed" in (proc.stderr or b""):
-            proc = _retry_transient(lambda: _attempt(legacy=True))
+            proc = _retry_transient(lambda: _attempt(legacy=True), "scp")
         if proc.returncode != 0:
             err = (proc.stderr or b"").decode(errors="replace").strip()
             raise PullError(f"Download failed: {err}")

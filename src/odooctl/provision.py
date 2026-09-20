@@ -9,7 +9,16 @@ import yaml
 from . import registry
 
 COPY_ITEMS = ["docker-compose.yml", "odoo.Dockerfile", "postgres.Dockerfile", "config"]
-HOME_PREFIX = str(Path.home())
+
+
+def _localize_host_path(path):
+    """Replace a Unix or Windows user-home prefix with the current home."""
+    normalized = str(path).replace("\\", "/")
+    match = re.match(r"^(?:/[Uu]sers/[^/]+|/[Hh]ome/[^/]+|[A-Za-z]:/[Uu]sers/[^/]+)(/.*)?$", normalized)
+    if not match:
+        return str(path)
+    suffix = match.group(1) or ""
+    return Path.home().as_posix() + suffix
 
 
 def slugify(name):
@@ -78,9 +87,9 @@ def rewrite_compose(data, slug, version, alloc):
             svc["ports"] = new_ports
         volumes = []
         for vol in svc.get("volumes") or []:
-            if isinstance(vol, str) and "/_odoo_addons/" in vol:
-                left, _, right = vol.partition(":")
-                left = re.sub(r"^/(home|Users)/[^/]+", HOME_PREFIX, left)
+            if isinstance(vol, str) and "/_odoo_addons/" in vol.replace("\\", "/"):
+                left, _, right = vol.rpartition(":")
+                left = _localize_host_path(left)
                 if version:
                     left = re.sub(r"odoo-\d+\.\d+", f"odoo-{version}", left)
                 vol = f"{left}:{right}"
