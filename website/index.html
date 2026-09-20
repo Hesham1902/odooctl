@@ -36,11 +36,11 @@
         <div class="terminal-bar"><i></i><i></i><i></i><span>odooctl</span></div>
         <div class="terminal-body">
           <p><b class="prompt">$</b> odooctl projects</p>
-          <p class="muted">arc&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;http:8052&nbsp;&nbsp;pg:5478</p>
-          <p class="muted">foodlover&nbsp;&nbsp;http:8071&nbsp;&nbsp;pg:5455</p>
-          <p><b class="prompt">$</b> odooctl pull arc</p>
-          <p class="success">[arc] found backup.daily/latest.sql.gz</p>
-          <p class="success">[arc] login ready: admin / admin</p>
+          <p class="muted">demo-shop&nbsp;&nbsp;&nbsp;http:8069&nbsp;&nbsp;pg:5432</p>
+          <p class="muted">inventory&nbsp;&nbsp;&nbsp;http:8070&nbsp;&nbsp;pg:5433</p>
+          <p><b class="prompt">$</b> odooctl pull demo-shop</p>
+          <p class="success">[demo-shop] found backup.daily/latest.sql.gz</p>
+          <p class="success">[demo-shop] local login ready</p>
           <p class="cursor">_</p>
         </div>
       </div>
@@ -68,32 +68,66 @@
           <div class="card-number">02</div>
           <h3>Run the common actions.</h3>
           <p>Use the same short commands for up, down, logs, status, tests, shell access, and opening the browser.</p>
-          <code>odooctl status arc</code>
+          <code>odooctl status demo-shop</code>
         </article>
         <article class="feature-card feature-card-accent">
           <div class="card-number">03</div>
           <h3>Pull without the browser dance.</h3>
           <p>Fetch the newest Odoo.sh dump over SSH, restore it locally, reset admin access, and sanitize the copy.</p>
-          <code>odooctl pull arc -d dev</code>
+          <code>odooctl pull demo-shop -d local</code>
         </article>
       </div>
     </section>
 
     <section class="app-preview shell">
       <div class="preview-copy">
-        <p class="eyebrow"><span></span> A window is coming</p>
+        <p class="eyebrow"><span></span> The Mac app</p>
         <h2>For the days when you do not want another terminal tab.</h2>
-        <p>The first desktop window gives you a project list and live Docker status. It uses the same registry and backend as the CLI, so the two views do not drift apart.</p>
+        <p>The desktop app gives you a project list and live Docker status. It uses the same registry and backend as the CLI, so the two views do not drift apart.</p>
         <a class="text-link" href="https://github.com/Hesham1902/odooctl#installation">Read the setup docs <span>↗</span></a>
       </div>
       <div class="window-mock" aria-label="Preview of the odooctl desktop window">
         <div class="window-titlebar"><span class="window-dot red"></span><span class="window-dot yellow"></span><span class="window-dot green"></span><span>odooctl</span></div>
         <div class="window-toolbar"><span class="toolbar-title">Projects</span><button>Refresh</button></div>
         <div class="project-row project-head"><span>PROJECT</span><span>STATUS</span><span>PORTS</span></div>
-        <div class="project-row"><span class="project-name">arc</span><span class="status running">Running</span><span>8052 / 5478</span></div>
-        <div class="project-row"><span class="project-name">cladex</span><span class="status down">Down</span><span>8070 / 5470</span></div>
-        <div class="project-row"><span class="project-name">foodlover</span><span class="status running">Running</span><span>8071 / 5455</span></div>
+        <div class="project-row"><span class="project-name">demo-shop</span><span class="status running">Running</span><span>8069 / 5432</span></div>
+        <div class="project-row"><span class="project-name">inventory</span><span class="status down">Down</span><span>8070 / 5433</span></div>
+        <div class="project-row"><span class="project-name">warehouse</span><span class="status running">Running</span><span>8071 / 5434</span></div>
         <div class="window-footer">3 projects</div>
+      </div>
+    </section>
+
+    <section class="capabilities shell">
+      <div class="section-heading">
+        <p class="eyebrow"><span></span> More than start and stop</p>
+        <h2>The rest of the work belongs here too.</h2>
+      </div>
+      <div class="capability-list">
+        <article class="capability-row">
+          <div class="capability-label"><span>01</span><h3>Project management</h3></div>
+          <p>Discover Compose projects, keep a local registry, bootstrap a new environment, or remove one cleanly.</p>
+          <code>discover&nbsp;&nbsp; projects&nbsp;&nbsp; init&nbsp;&nbsp; remove</code>
+        </article>
+        <article class="capability-row">
+          <div class="capability-label"><span>02</span><h3>Runtime control</h3></div>
+          <p>See containers and databases, start or stop a stack, follow logs, open the browser, and restart on addon changes.</p>
+          <code>status&nbsp;&nbsp; up&nbsp;&nbsp; down&nbsp;&nbsp; restart&nbsp;&nbsp; logs&nbsp;&nbsp; dev</code>
+        </article>
+        <article class="capability-row">
+          <div class="capability-label"><span>03</span><h3>Addon development</h3></div>
+          <p>Use SQL or the Odoo shell, inspect installed addons, trace dependencies, compare databases, upgrade changes, and run isolated tests.</p>
+          <code>psql&nbsp;&nbsp; shell&nbsp;&nbsp; addons&nbsp;&nbsp; deps&nbsp;&nbsp; diff&nbsp;&nbsp; upgrade&nbsp;&nbsp; test</code>
+        </article>
+        <article class="capability-row">
+          <div class="capability-label"><span>04</span><h3>Database safety</h3></div>
+          <p>Back up and restore databases, pull Odoo.sh snapshots, sanitize production copies, repair icons, and reset access safely.</p>
+          <code>backup&nbsp;&nbsp; restore&nbsp;&nbsp; pull&nbsp;&nbsp; sanitize&nbsp;&nbsp; reset&nbsp;&nbsp; reset-admin</code>
+        </article>
+        <article class="capability-row">
+          <div class="capability-label"><span>05</span><h3>Storage and platforms</h3></div>
+          <p>Understand Docker disk use, clean stale images and volumes, and work across macOS, Linux, and Windows with Docker Desktop.</p>
+          <code>space&nbsp;&nbsp; gc&nbsp;&nbsp; macOS app&nbsp;&nbsp; Windows CLI</code>
+        </article>
       </div>
     </section>
 

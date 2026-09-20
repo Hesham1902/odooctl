@@ -106,6 +106,12 @@ h2 { font-size: clamp(34px, 4.2vw, 56px); letter-spacing: -.065em; line-height: 
 .project-name { font-weight: 750; }.status { font-weight: 700; }.status.running { color: #2e9b5f; }.status.down { color: #989994; }
 .window-footer { color: #9b9993; font-size: 11px; padding: 19px 24px; }
 
+.capabilities { padding: 145px 0 130px; }
+.capability-list { border-top: 1px solid var(--line); }
+.capability-row { align-items: center; border-bottom: 1px solid var(--line); display: grid; gap: 35px; grid-template-columns: 1.05fr 1.1fr 1fr; padding: 28px 0; }
+.capability-label { align-items: center; display: flex; gap: 19px; }.capability-label span { color: var(--coral); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }.capability-label h3 { font-size: 18px; letter-spacing: -.04em; margin: 0; }
+.capability-row p { color: var(--muted); font-size: 13px; margin: 0; max-width: 380px; }.capability-row code { color: #65717c; font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
 .download { padding: 150px 0 130px; }
 .download-panel { align-items: center; background: var(--coral); border-radius: 10px; color: var(--ink); display: grid; gap: 60px; grid-template-columns: 1fr 1fr; padding: 56px 62px; }
 .download-panel .eyebrow { color: #74392f; }.download-panel .eyebrow span { background: var(--ink); }
@@ -124,6 +130,7 @@ h2 { font-size: clamp(34px, 4.2vw, 56px); letter-spacing: -.065em; line-height: 
   .proof { gap: 21px; grid-template-columns: 1fr; }.proof div { padding: 0; }
   .section { padding: 100px 0 85px; }.section-heading { display: block; margin-bottom: 35px; }.section-heading h2 { margin-top: 33px; }.feature-grid { grid-template-columns: 1fr; }.feature-card { min-height: 260px; }.card-number { margin-bottom: 45px; }
   .app-preview { display: block; padding: 45px 25px 25px; }.preview-copy { margin-bottom: 45px; }
+  .capabilities { padding: 100px 0 85px; }.capability-row { display: block; padding: 24px 0; }.capability-row p { margin: 15px 0; }.capability-row code { display: block; }
   .download { padding: 95px 0 85px; }.download-panel { display: block; padding: 38px 25px; }.download-actions { margin-top: 35px; }
   .footer { align-items: flex-start; flex-wrap: wrap; gap: 18px; }.footer p { order: 3; width: 100%; }
 }
