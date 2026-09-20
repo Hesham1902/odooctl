@@ -44,22 +44,19 @@ def test_parse_target_rejects_garbage():
         pull.parse_target("")
 
 
-def _is_probe(cmd):
-    return "ODOOCTL_OK" in cmd[-1]
+FOUND_OUTPUT = (
+    b"ODOOCTL_OK\n"
+    b"SQL_GZ=/backup.daily/db_20260821.sql.gz\n"
+    b"MIRROR=/backup.daily/db_20260821\n"
+)
 
 
-def test_find_remote_backup_first_dir_wins(monkeypatch):
+def test_find_remote_backup_uses_a_single_ssh_command(monkeypatch):
     calls = []
 
     def fake_run(cmd, capture_output=True):
         calls.append(cmd[-1])
-        if _is_probe(cmd):
-            return FakeProc(out=b"ODOOCTL_OK\n")
-        if "*.sql.gz" in cmd[-1]:
-            return FakeProc(out=b"/backup.daily/db_20260821.sql.gz\n")
-        if "[ -d " in cmd[-1]:
-            return FakeProc(out=b"yes\n")
-        return FakeProc(out=b"")
+        return FakeProc(out=FOUND_OUTPUT)
 
     monkeypatch.setattr(pull.subprocess, "run", fake_run)
     found = pull.find_remote_backup("u@h")
@@ -67,29 +64,23 @@ def test_find_remote_backup_first_dir_wins(monkeypatch):
         "sql_gz": "/backup.daily/db_20260821.sql.gz",
         "mirror": "/backup.daily/db_20260821",
     }
-    assert len(calls) == 3  # probe + ls + mirror-exists
+    # probe + dir scan + mirror check all folded into one exec
+    assert len(calls) == 1
+    assert "ODOOCTL_OK" in calls[0] and "*.sql.gz" in calls[0] and "MIRROR" in calls[0]
 
 
 def test_find_remote_backup_mirror_missing(monkeypatch):
     def fake_run(cmd, capture_output=True):
-        if _is_probe(cmd):
-            return FakeProc(out=b"ODOOCTL_OK\n")
-        if "*.sql.gz" in cmd[-1]:
-            return FakeProc(out=b"/backup.daily/db_20260821.sql.gz\n")
-        if "[ -d " in cmd[-1]:
-            return FakeProc(out=b"no\n")
-        return FakeProc(out=b"")
+        return FakeProc(out=b"ODOOCTL_OK\nSQL_GZ=/backup.daily/db_20260821.sql.gz\n")
 
     monkeypatch.setattr(pull.subprocess, "run", fake_run)
     found = pull.find_remote_backup("u@h")
     assert found == {"sql_gz": "/backup.daily/db_20260821.sql.gz", "mirror": None}
 
 
-def test_probe_failure_surfaces_ssh_error(monkeypatch):
+def test_ssh_failure_surfaces_ssh_error(monkeypatch):
     def fake_run(cmd, capture_output=True):
-        if _is_probe(cmd):
-            return FakeProc(rc=255, err=b"Permission denied (publickey)")
-        raise AssertionError("should not scan dirs when probe fails")
+        return FakeProc(rc=255, err=b"Permission denied (publickey)")
 
     monkeypatch.setattr(pull.subprocess, "run", fake_run)
     with pytest.raises(pull.PullError) as exc:
@@ -98,30 +89,95 @@ def test_probe_failure_surfaces_ssh_error(monkeypatch):
     assert "'SSH' button" in str(exc.value)
 
 
-def test_find_remote_backup_falls_through_and_raises(monkeypatch):
+def test_find_remote_backup_persistent_rejection_is_an_ssh_error(monkeypatch):
+    """The odoo.sh gateway flake must not masquerade as 'No backup found'."""
+
     def fake_run(cmd, capture_output=True):
-        if _is_probe(cmd):
-            return FakeProc(out=b"ODOOCTL_OK\n")
-        return FakeProc(out=b"")
+        return FakeProc(rc=255, err=b"exec request failed on channel 0")
 
     monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    monkeypatch.setattr(pull.time, "sleep", lambda s: None)
+    with pytest.raises(pull.PullError) as exc:
+        pull.find_remote_backup("u@h")
+    assert "Cannot reach" in str(exc.value)
+    assert "No backup" not in str(exc.value)
+
+
+def test_find_remote_backup_retries_transient_exec_rejections(monkeypatch):
+    attempts = []
+
+    def fake_run(cmd, capture_output=True):
+        attempts.append(1)
+        if len(attempts) < 3:
+            return FakeProc(rc=255, err=b"exec request failed on channel 0")
+        return FakeProc(out=FOUND_OUTPUT)
+
+    monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    sleeps = []
+    monkeypatch.setattr(pull.time, "sleep", lambda s: sleeps.append(s))
+    found = pull.find_remote_backup("u@h")
+    assert found["sql_gz"] == "/backup.daily/db_20260821.sql.gz"
+    assert len(attempts) == 3
+    assert len(sleeps) == 2
+
+
+def test_find_remote_backup_no_backup_lists_dirs(monkeypatch):
+    monkeypatch.setattr(pull.subprocess, "run", lambda cmd, **kw: FakeProc(out=b"ODOOCTL_OK\n"))
     with pytest.raises(pull.PullError) as exc:
         pull.find_remote_backup("u@h")
     assert "--path" in str(exc.value)
+    assert "backup.daily" in str(exc.value)
 
-    # explicit path is used directly
-    def explicit(cmd, **kw):
-        if _is_probe(cmd):
-            return FakeProc(out=b"ODOOCTL_OK\n")
-        if "[ -d " in cmd[-1]:
-            return FakeProc(out=b"yes\n")
-        return FakeProc(out=b"/tmp/x.sql.gz\n")
 
-    monkeypatch.setattr(pull.subprocess, "run", explicit)
-    assert pull.find_remote_backup("u@h", path="/tmp") == {
-        "sql_gz": "/tmp/x.sql.gz",
-        "mirror": "/tmp/x",
-    }
+def test_find_remote_backup_explicit_dir_path(monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, capture_output=True):
+        seen["cmd"] = cmd[-1]
+        return FakeProc(out=b"ODOOCTL_OK\nSQL_GZ=/tmp/x.sql.gz\nMIRROR=/tmp/x\n")
+
+    monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    found = pull.find_remote_backup("u@h", path="/tmp")
+    assert found == {"sql_gz": "/tmp/x.sql.gz", "mirror": "/tmp/x"}
+    assert "/tmp" in seen["cmd"]
+
+
+def test_find_remote_backup_accepts_direct_file_path(monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, capture_output=True):
+        seen["cmd"] = cmd[-1]
+        return FakeProc(out=b"ODOOCTL_OK\nSQL_GZ=/b/acme.sql.gz\nMIRROR=/b/acme\n")
+
+    monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    found = pull.find_remote_backup("u@h", path="/b/acme.sql.gz")
+    assert found == {"sql_gz": "/b/acme.sql.gz", "mirror": "/b/acme"}
+    assert "[ -f " in seen["cmd"] and "/b/acme.sql.gz" in seen["cmd"]
+    assert "for d in" not in seen["cmd"]
+
+
+def test_probe_retries_transient_rejections(monkeypatch):
+    attempts = []
+
+    def fake_run(cmd, capture_output=True):
+        attempts.append(cmd[-1])
+        if len(attempts) < 2:
+            return FakeProc(rc=255, err=b"exec request failed on channel 0")
+        return FakeProc(out=b"ODOOCTL_OK\n")
+
+    monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    monkeypatch.setattr(pull.time, "sleep", lambda s: None)
+    pull.probe("u@h")
+    assert len(attempts) == 2
+
+
+def test_scan_script_leaves_safe_words_bare_and_quotes_unsafe_ones():
+    script = pull._scan_script(["~/backup.daily", "/backup.daily", "/my backups"])
+    # safe words stay unquoted so the remote shell expands ~ and globs itself
+    assert script.index("~/backup.daily") < script.index("/backup.daily")
+    assert "'/my backups'" in script
+    assert "case " not in script  # odoo.sh's shell expands ~ in ${d#~} patterns
+    assert "MIRROR=" in script
 
 
 def test_download_builds_bundle(tmp_path, monkeypatch):

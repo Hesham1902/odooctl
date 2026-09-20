@@ -1,4 +1,5 @@
 import gzip
+import shlex
 import shutil
 import subprocess
 import time
@@ -12,6 +13,24 @@ ODOO_SH_BACKUP_DIRS = [
     "/backup.weekly",
     "/backup.monthly",
 ]
+
+# odoo.sh's SSH gateway intermittently rejects exec requests
+# ("exec request failed on channel 0") on connections that are otherwise fine;
+# a fresh attempt right after usually succeeds.
+_TRANSIENT_EXEC_ERROR = "exec request failed"
+_SSH_ATTEMPTS = 5
+_SSH_RETRY_DELAY = 1.5
+
+# characters that make a remote shell word unsafe to leave unquoted
+_UNSAFE_WORD_CHARS = set(" \t\n'\"\\$`&|;<>(){}*?[]#!")
+
+
+def _shell_word(path):
+    """Emit a path as one remote shell word: bare when safe (so ~ and globs
+    expand on the remote side), quoted otherwise."""
+    if path and not any(ch in path for ch in _UNSAFE_WORD_CHARS):
+        return path
+    return shlex.quote(path)
 
 
 class PullError(RuntimeError):
@@ -94,19 +113,78 @@ def _scp_cmd(target, port, remote_path, local_path, key=None, legacy=False):
     return [*args, f"{target}:{remote_path}", str(local_path)]
 
 
+def _retry_transient(run_fn):
+    """Re-run run_fn while the remote transiently rejects the exec request."""
+    proc = run_fn()
+    for _ in range(_SSH_ATTEMPTS - 1):
+        if proc.returncode == 0:
+            break
+        if _TRANSIENT_EXEC_ERROR not in (proc.stderr or b"").decode(errors="replace"):
+            break
+        time.sleep(_SSH_RETRY_DELAY)
+        proc = run_fn()
+    return proc
+
+
+def _ssh_exec(target, port, command, key=None):
+    """One remote command over SSH, retrying odoo.sh's transient exec rejections."""
+    return _retry_transient(
+        lambda: subprocess.run(_ssh_cmd(target, port, command, key=key), capture_output=True)
+    )
+
+
+def _unreachable(target, err):
+    return PullError(
+        f"Cannot reach {target} over SSH.\n{err}\n\n"
+        "Hints:\n"
+        "- Use the exact string from your Odoo.sh 'SSH' button "
+        "(it can look like 'ssh 1234567@acme.odoo.com').\n"
+        "- Add your public key under odoo.sh project Settings -> Keys.\n"
+        f"- Test manually: ssh {target} 'ls -1 /backup.daily/'"
+    )
+
+
 def probe(target, port=None, key=None):
     """Fail fast with the real SSH error if we cannot connect/authenticate."""
-    proc = subprocess.run(_ssh_cmd(target, port, "echo ODOOCTL_OK", key=key), capture_output=True)
+    proc = _ssh_exec(target, port, "echo ODOOCTL_OK", key=key)
     if proc.returncode != 0 or b"ODOOCTL_OK" not in (proc.stdout or b""):
         err = ((proc.stderr or b"") + (proc.stdout or b"")).decode(errors="replace").strip()
-        raise PullError(
-            f"Cannot reach {target} over SSH.\n{err}\n\n"
-            "Hints:\n"
-            "- Use the exact string from your Odoo.sh 'SSH' button "
-            "(it can look like 'ssh 1234567@acme.odoo.com').\n"
-            "- Add your public key under odoo.sh project Settings -> Keys.\n"
-            f"- Test manually: ssh {target} 'ls -1 /backup.daily/'"
-        )
+        raise _unreachable(target, err)
+
+
+def _scan_script(dirs):
+    """One remote script: newest *.sql.gz across dirs, plus the mirror check.
+
+    Everything must run as a single SSH exec: the odoo.sh gateway rejects
+    rapid successive connections, so discovery must not open one channel
+    per directory. Dir words stay unquoted when safe so the remote shell
+    expands a leading ~ itself (odoo.sh's shell also expands ~ inside
+    parameter-expansion patterns, which breaks ${d#~} normalization).
+    """
+    words = " ".join(_shell_word(d) for d in dirs)
+    return (
+        "echo ODOOCTL_OK; "
+        f"for d in {words}; do "
+        'f="$(ls -1t "$d"/*.sql.gz 2>/dev/null | head -n 1)"; '
+        '[ -n "$f" ] || continue; '
+        'echo "SQL_GZ=$f"; '
+        'm="${f%.sql.gz}"; '
+        '[ "$m" != "$f" ] && [ -d "$m" ] && echo "MIRROR=$m"; '
+        "break; "
+        "done"
+    )
+
+
+def _file_script(path):
+    """One remote script: use an explicit dump file (path ends in .sql.gz)."""
+    return (
+        "echo ODOOCTL_OK; "
+        f"f={_shell_word(path)}; "
+        '[ -f "$f" ] || exit 0; '
+        'echo "SQL_GZ=$f"; '
+        'm="${f%.sql.gz}"; '
+        '[ "$m" != "$f" ] && [ -d "$m" ] && echo "MIRROR=$m"'
+    )
 
 
 def find_remote_backup(target, port=None, path=None, key=None):
@@ -114,34 +192,32 @@ def find_remote_backup(target, port=None, path=None, key=None):
 
     Returns {"sql_gz": remote path, "mirror": remote dir | None}. Odoo.sh keeps
     the filestore in a sibling directory named like the dump without extension,
-    mirroring $HOME (filestore under home/odoo/data).
+    mirroring $HOME (filestore under home/odoo/data). `path` may be a directory
+    to scan or a direct path to a .sql.gz file.
     """
-    probe(target, port, key=key)
-    dirs = [path] if path else ODOO_SH_BACKUP_DIRS
-    looked = []
-    for d in dirs:
-        looked.append(d)
-        proc = subprocess.run(
-            _ssh_cmd(target, port, f"ls -1t {d}/*.sql.gz 2>/dev/null | head -n 1", key=key),
-            capture_output=True,
+    if path and path.endswith(".sql.gz"):
+        script, looked = _file_script(path), [path]
+    else:
+        dirs = [path] if path else ODOO_SH_BACKUP_DIRS
+        script, looked = _scan_script(dirs), dirs
+    proc = _ssh_exec(target, port, script, key=key)
+    out = proc.stdout.decode(errors="replace")
+    if proc.returncode != 0 or "ODOOCTL_OK" not in out:
+        err = ((proc.stderr or b"") + (proc.stdout or b"")).decode(errors="replace").strip()
+        raise _unreachable(target, err)
+    sql_gz = mirror = None
+    for line in out.splitlines():
+        if sql_gz is None and line.startswith("SQL_GZ="):
+            sql_gz = line[len("SQL_GZ=") :].strip()
+        elif sql_gz is not None and mirror is None and line.startswith("MIRROR="):
+            mirror = line[len("MIRROR=") :].strip()
+    if not sql_gz:
+        raise PullError(
+            "No backup (*.sql.gz) found on remote. Looked in: "
+            + ", ".join(looked)
+            + "\nPass --path /path/to/backup.sql.gz explicitly."
         )
-        first = proc.stdout.decode(errors="replace").strip().splitlines()
-        if proc.returncode == 0 and first and first[0].strip():
-            sql_gz = first[0].strip()
-            mirror = sql_gz[: -len(".sql.gz")] if sql_gz.endswith(".sql.gz") else None
-            if mirror:
-                chk = subprocess.run(
-                    _ssh_cmd(target, port, f"[ -d '{mirror}' ] && echo yes || echo no", key=key),
-                    capture_output=True,
-                )
-                if "yes" not in chk.stdout.decode(errors="replace"):
-                    mirror = None
-            return {"sql_gz": sql_gz, "mirror": mirror}
-    raise PullError(
-        "No backup (*.sql.gz) found on remote. Looked in: "
-        + ", ".join(looked)
-        + "\nPass --path /path/to/backup.sql.gz explicitly."
-    )
+    return {"sql_gz": sql_gz, "mirror": mirror}
 
 
 def _stream_remote_tar(target, port, remote_dir, remote_sub, dest: Path, key=None, progress=True):
@@ -180,9 +256,8 @@ def _stream_remote_tar(target, port, remote_dir, remote_sub, dest: Path, key=Non
 
 def remote_dir_size(target, port, path, key=None):
     """`du -sm` on the remote path -> e.g. '2.3 GB', or None."""
-    proc = subprocess.run(
-        _ssh_cmd(target, port, f"du -sm {path} 2>/dev/null | cut -f1", key=key),
-        capture_output=True,
+    proc = _ssh_exec(
+        target, port, f"du -sm {path} 2>/dev/null | cut -f1", key=key
     )
     try:
         mb = int(proc.stdout.decode().strip())
@@ -211,9 +286,11 @@ def _is_complete_gzip(path: Path) -> bool:
 
 def _remote_file_size(target, port, path, key=None):
     """Size in bytes of `path` on the remote, or None if it can't be read."""
-    proc = subprocess.run(
-        _ssh_cmd(target, port, f"stat -c%s '{path}' 2>/dev/null || stat -f%z '{path}' 2>/dev/null", key=key),
-        capture_output=True,
+    proc = _ssh_exec(
+        target,
+        port,
+        f"stat -c%s '{path}' 2>/dev/null || stat -f%z '{path}' 2>/dev/null",
+        key=key,
     )
     out = proc.stdout.decode(errors="replace").strip()
     return int(out) if out.isdigit() else None
@@ -250,13 +327,16 @@ def download(target, port, remote, dest_dir, key=None, with_filestore=False):
         if local_sql.exists():
             print(f"cached {name} is incomplete or corrupt, re-downloading")
             local_sql.unlink()
-        proc = subprocess.run(
-            _scp_cmd(target, port, remote["sql_gz"], local_sql, key=key), capture_output=True
-        )
-        if proc.returncode != 0 and b"subsystem request failed" in (proc.stderr or b""):
-            proc = subprocess.run(
-                _scp_cmd(target, port, remote["sql_gz"], local_sql, key=key, legacy=True), capture_output=True
+
+        def _attempt(legacy=False):
+            return subprocess.run(
+                _scp_cmd(target, port, remote["sql_gz"], local_sql, key=key, legacy=legacy),
+                capture_output=True,
             )
+
+        proc = _retry_transient(_attempt)
+        if proc.returncode != 0 and b"subsystem request failed" in (proc.stderr or b""):
+            proc = _retry_transient(lambda: _attempt(legacy=True))
         if proc.returncode != 0:
             err = (proc.stderr or b"").decode(errors="replace").strip()
             raise PullError(f"Download failed: {err}")
@@ -264,10 +344,7 @@ def download(target, port, remote, dest_dir, key=None, with_filestore=False):
     mirror = remote.get("mirror")
     if mirror and with_filestore:
         data_dir = f"{mirror}/home/odoo/data"
-        chk = subprocess.run(
-            _ssh_cmd(target, port, f"[ -d '{data_dir}' ] && echo yes || echo no", key=key),
-            capture_output=True,
-        )
+        chk = _ssh_exec(target, port, f"[ -d '{data_dir}' ] && echo yes || echo no", key=key)
         if "yes" in chk.stdout.decode(errors="replace"):
             size = remote_dir_size(target, port, data_dir, key=key)
             if size:
