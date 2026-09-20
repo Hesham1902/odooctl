@@ -167,6 +167,25 @@ QLabel#SectionLabel {
     font-size: 11px;
     font-weight: 700;
 }
+QLabel#FieldLabel {
+    color: #8a8f98;
+    font-size: 11px;
+    font-weight: 700;
+}
+QLabel#FieldValue {
+    color: #1d2129;
+    font-size: 13px;
+}
+QLabel#FieldValueStrong {
+    color: #1d2129;
+    font-size: 14px;
+    font-weight: 600;
+}
+QFrame#InfoCard {
+    background-color: #f8f9fb;
+    border: 1px solid #e9ecf1;
+    border-radius: 8px;
+}
 QWidget#HeaderBar, QFrame#Card {
     background-color: #ffffff;
     border: 1px solid #e5e7eb;
@@ -291,8 +310,10 @@ def launch():
             QFileDialog,
             QFormLayout,
             QFrame,
+            QGridLayout,
             QGroupBox,
             QHBoxLayout,
+            QHeaderView,
             QLabel,
             QLineEdit,
             QMainWindow,
@@ -323,7 +344,11 @@ def launch():
 
         def set_state(self, state):
             """Update the label text and colors for a new state."""
-            self.setText(state or "-")
+            text = state or "-"
+            self.setText(text)
+            # Include the label padding in the size hint so long states are never
+            # clipped inside the project table.
+            self.setMinimumWidth(max(88, self.fontMetrics().horizontalAdvance(text) + 24))
             bg, fg = STATUS_COLORS.get(state, STATUS_COLORS["default"])
             self.setStyleSheet(
                 f"background-color: {bg}; color: {fg}; border-radius: 10px; "
@@ -606,7 +631,12 @@ def launch():
             self.table.verticalHeader().setVisible(False)
             self.table.setAlternatingRowColors(True)
             self.table.setShowGrid(False)
-            self.table.horizontalHeader().setStretchLastSection(True)
+            header = self.table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(1, 112)
+            header.resizeSection(2, 64)
             self.table.itemSelectionChanged.connect(self.selection_changed)
             layout.addWidget(self.table, 1)
             return panel
@@ -649,6 +679,7 @@ def launch():
             head = QHBoxLayout()
             self.detail_name = QLabel("")
             self.detail_name.setObjectName("AppTitle")
+            self.detail_name.setMinimumWidth(90)
             head.addWidget(self.detail_name)
             self.detail_badge = StatusBadge()
             head.addWidget(self.detail_badge)
@@ -659,19 +690,34 @@ def launch():
             head.addWidget(self.pull_button)
             layout.addLayout(head)
 
-            info = QFormLayout()
-            info.setSpacing(6)
-            self.detail_http = QLabel("-")
-            info.addRow("HTTP port", self.detail_http)
-            self.detail_postgres = QLabel("-")
-            info.addRow("Postgres port", self.detail_postgres)
-            self.detail_path = QLabel("-")
-            self.detail_path.setObjectName("AppSubtitle")
-            info.addRow("Path", self.detail_path)
-            self.detail_note = QLabel("-")
+            info = QGridLayout()
+            info.setContentsMargins(0, 2, 0, 0)
+            info.setHorizontalSpacing(10)
+            info.setVerticalSpacing(10)
+
+            def add_info_card(row, column, label, object_name="FieldValue"):
+                card = QFrame()
+                card.setObjectName("InfoCard")
+                card_layout = QVBoxLayout(card)
+                card_layout.setContentsMargins(12, 9, 12, 9)
+                card_layout.setSpacing(2)
+                caption = QLabel(label.upper())
+                caption.setObjectName("FieldLabel")
+                card_layout.addWidget(caption)
+                value = QLabel("-")
+                value.setObjectName(object_name)
+                value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                card_layout.addWidget(value)
+                info.addWidget(card, row, column)
+                return value
+
+            self.detail_http = add_info_card(0, 0, "HTTP port", "FieldValueStrong")
+            self.detail_postgres = add_info_card(0, 1, "Postgres port", "FieldValueStrong")
+            self.detail_path = add_info_card(1, 0, "Project path")
+            self.detail_note = add_info_card(1, 1, "Status detail")
             self.detail_note.setWordWrap(True)
-            self.detail_note.setObjectName("AppSubtitle")
-            info.addRow("Detail", self.detail_note)
+            info.setColumnStretch(0, 1)
+            info.setColumnStretch(1, 1)
             layout.addLayout(info)
 
             actions = QHBoxLayout()
@@ -695,7 +741,9 @@ def launch():
             self.output.setReadOnly(True)
             self.output.setPlaceholderText("Select a project and run an action to see its output.")
             self.output.setMaximumBlockCount(2000)
-            layout.addWidget(self.output, 1)
+            self.output.setMinimumHeight(112)
+            self.output.setMaximumHeight(180)
+            layout.addWidget(self.output)
             return content
 
         def show_detail(self, slug):
@@ -706,11 +754,14 @@ def launch():
                 return
             self.detail_stack.setCurrentIndex(1)
             self.detail_name.setText(row.slug)
+            self.detail_name.setToolTip(row.slug)
             self.detail_badge.set_state(row.state)
             self.detail_http.setText(row.http)
             self.detail_postgres.setText(row.postgres)
             elided = self.detail_path.fontMetrics().elidedText(
-                row.path, Qt.TextElideMode.ElideMiddle, 440
+                row.path,
+                Qt.TextElideMode.ElideMiddle,
+                max(120, self.detail_path.width() - 24),
             )
             self.detail_path.setText(elided)
             self.detail_path.setToolTip(row.path)
