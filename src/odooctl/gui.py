@@ -134,12 +134,154 @@ def pull_project(slug, options, progress=print):
     return run_pull(resolved_slug, project, options, progress=progress)
 
 
+# Background/foreground colors used for the project status badge, keyed by state.
+STATUS_COLORS = {
+    "Running": ("#d3f5df", "#1b7a3d"),
+    "Down": ("#e9ecef", "#495057"),
+    "Partial": ("#ffe8cc", "#b3590a"),
+    "Unavailable": ("#ffe8cc", "#b3590a"),
+    "Error": ("#ffe0e0", "#c1121f"),
+    "default": ("#e9ecef", "#495057"),
+}
+
+# A small, cohesive Qt stylesheet applied once at the application level so widgets
+# share consistent spacing, color, and typography instead of one-off inline styles.
+APP_STYLESHEET = """
+QWidget#CentralWidget, QMainWindow, QDialog {
+    background-color: #f4f5f7;
+}
+QWidget {
+    font-size: 13px;
+    color: #1d2129;
+}
+QLabel#AppTitle {
+    font-size: 17px;
+    font-weight: 700;
+}
+QLabel#AppSubtitle {
+    color: #6b7280;
+    font-size: 12px;
+}
+QLabel#SectionLabel {
+    color: #8a8f98;
+    font-size: 11px;
+    font-weight: 700;
+}
+QWidget#HeaderBar, QFrame#Card {
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+}
+QPushButton {
+    background-color: #ffffff;
+    border: 1px solid #d0d5dd;
+    border-radius: 6px;
+    padding: 6px 14px;
+}
+QPushButton:hover {
+    background-color: #f1f3f5;
+}
+QPushButton:pressed {
+    background-color: #e5e7eb;
+}
+QPushButton:disabled {
+    color: #adb5bd;
+    background-color: #f8f9fa;
+    border-color: #e5e7eb;
+}
+QPushButton#PrimaryButton {
+    background-color: #2f6fed;
+    border: 1px solid #2f6fed;
+    color: #ffffff;
+    font-weight: 600;
+    padding: 8px 18px;
+}
+QPushButton#PrimaryButton:hover {
+    background-color: #2559c8;
+}
+QPushButton#PrimaryButton:disabled {
+    background-color: #a9c2f5;
+    border-color: #a9c2f5;
+    color: #eef2ff;
+}
+QTableWidget {
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    gridline-color: transparent;
+    selection-background-color: #e7effe;
+    selection-color: #1d2129;
+    alternate-background-color: #fafbfc;
+}
+QTableWidget::item {
+    padding: 4px 6px;
+}
+QHeaderView::section {
+    background-color: #f8f9fa;
+    border: none;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 6px;
+    font-weight: 600;
+    color: #495057;
+}
+QGroupBox {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    margin-top: 14px;
+    padding: 14px 12px 12px 12px;
+    font-weight: 600;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+    color: #344054;
+}
+QLineEdit {
+    border: 1px solid #d0d5dd;
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: #ffffff;
+}
+QLineEdit:focus {
+    border: 1px solid #2f6fed;
+}
+QCheckBox#DangerCheck {
+    color: #c1121f;
+    font-weight: 600;
+}
+QPlainTextEdit {
+    background-color: #0f172a;
+    color: #d1d5db;
+    border-radius: 8px;
+    border: 1px solid #1f2937;
+    font-family: "SFMono-Regular", Menlo, Consolas, monospace;
+    padding: 8px;
+}
+QToolButton#SectionToggle {
+    border: none;
+    background: transparent;
+    font-weight: 600;
+    color: #344054;
+    padding: 4px 0;
+}
+QStatusBar {
+    background-color: #f4f5f7;
+    color: #6b7280;
+    border-top: 1px solid #e5e7eb;
+}
+QSplitter::handle {
+    background-color: #f4f5f7;
+    width: 10px;
+}
+"""
+
+
 def launch():
     """Open the optional desktop project manager and run its event loop."""
     prepare_gui_environment()
     try:
-        from PySide6.QtCore import QObject, QThread, Signal
-        from PySide6.QtGui import QColor
+        from PySide6.QtCore import QObject, Qt, QThread, Signal
         from PySide6.QtWidgets import (
             QAbstractItemView,
             QApplication,
@@ -148,6 +290,7 @@ def launch():
             QDialogButtonBox,
             QFileDialog,
             QFormLayout,
+            QFrame,
             QGroupBox,
             QHBoxLayout,
             QLabel,
@@ -156,8 +299,11 @@ def launch():
             QMessageBox,
             QPlainTextEdit,
             QPushButton,
+            QSplitter,
+            QStackedWidget,
             QTableWidget,
             QTableWidgetItem,
+            QToolButton,
             QVBoxLayout,
             QWidget,
         )
@@ -166,24 +312,89 @@ def launch():
             "GUI support is not installed. Run `python -m pip install 'odooctl[gui]'` and try again."
         ) from exc
 
+    class StatusBadge(QLabel):
+        """A small colored pill that reflects one project's Docker Compose state."""
+
+        def __init__(self, state="", parent=None):
+            super().__init__(parent)
+            self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.setFixedHeight(20)
+            self.set_state(state)
+
+        def set_state(self, state):
+            """Update the label text and colors for a new state."""
+            self.setText(state or "-")
+            bg, fg = STATUS_COLORS.get(state, STATUS_COLORS["default"])
+            self.setStyleSheet(
+                f"background-color: {bg}; color: {fg}; border-radius: 10px; "
+                "padding: 1px 10px; font-weight: 600; font-size: 11px;"
+            )
+
+    class CollapsibleSection(QWidget):
+        """A titled, collapsible group of secondary widgets for advanced options."""
+
+        def __init__(self, title, expanded=False, parent=None):
+            super().__init__(parent)
+            self.toggle_button = QToolButton()
+            self.toggle_button.setObjectName("SectionToggle")
+            self.toggle_button.setText(title)
+            self.toggle_button.setCheckable(True)
+            self.toggle_button.setChecked(expanded)
+            self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            self.toggle_button.setArrowType(
+                Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+            )
+            self.toggle_button.clicked.connect(self._on_toggled)
+
+            self.content = QWidget()
+            self.content.setVisible(expanded)
+            self.content_layout = QVBoxLayout(self.content)
+            self.content_layout.setContentsMargins(22, 4, 0, 4)
+            self.content_layout.setSpacing(6)
+
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            layout.addWidget(self.toggle_button)
+            layout.addWidget(self.content)
+
+        def _on_toggled(self, checked):
+            self.toggle_button.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+            self.content.setVisible(checked)
+
+        def add_widget(self, widget):
+            """Add one widget to the collapsible body."""
+            self.content_layout.addWidget(widget)
+
     class PullDialog(QDialog):
-        """Collect connection and restore choices without crowding the main window."""
+        """A focused, single-purpose flow for pulling and restoring one backup."""
 
         def __init__(self, parent, slug, saved):
             super().__init__(parent)
             self.setWindowTitle(f"Pull backup · {slug}")
-            self.setMinimumWidth(560)
+            self.setMinimumWidth(580)
+            self.setModal(True)
+
             layout = QVBoxLayout(self)
+            layout.setContentsMargins(24, 22, 24, 20)
+            layout.setSpacing(14)
+
+            heading = QLabel(f"Pull backup for <b>{slug}</b>")
+            heading.setObjectName("AppTitle")
+            layout.addWidget(heading)
 
             intro = QLabel(
                 "Fetch the newest Odoo.sh backup over SSH, restore it locally, "
                 "and choose which safety steps to run."
             )
             intro.setWordWrap(True)
+            intro.setObjectName("AppSubtitle")
             layout.addWidget(intro)
 
             connection = QGroupBox("Connection")
             form = QFormLayout(connection)
+            form.setSpacing(10)
+            form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
             self.target_edit = QLineEdit(saved.get("from", ""))
             self.target_edit.setPlaceholderText("ssh://1234567@your-project.odoo.com")
             form.addRow("SSH target", self.target_edit)
@@ -197,6 +408,7 @@ def launch():
             key_row = QWidget()
             key_layout = QHBoxLayout(key_row)
             key_layout.setContentsMargins(0, 0, 0, 0)
+            key_layout.setSpacing(8)
             self.key_edit = QLineEdit(saved.get("key", ""))
             self.key_edit.setPlaceholderText("Optional · uses your SSH agent/default key")
             key_layout.addWidget(self.key_edit)
@@ -206,44 +418,58 @@ def launch():
             form.addRow("Private key", key_row)
             layout.addWidget(connection)
 
-            options = QGroupBox("Restore options")
-            options_layout = QVBoxLayout(options)
+            restore = QGroupBox("What to restore")
+            restore_layout = QVBoxLayout(restore)
+            restore_layout.setSpacing(8)
             self.with_filestore = QCheckBox("Include filestore and attachments")
             self.with_filestore.setToolTip("Downloads a larger backup containing images and attachments.")
-            options_layout.addWidget(self.with_filestore)
+            restore_layout.addWidget(self.with_filestore)
             self.reset_admin = QCheckBox("Reset the main login to admin / admin")
             self.reset_admin.setChecked(True)
             self.reset_admin.setToolTip("Makes the restored database immediately accessible locally.")
-            options_layout.addWidget(self.reset_admin)
-            self.fix_icons = QCheckBox("Repair missing menu icons")
-            self.fix_icons.setChecked(True)
-            self.fix_icons.setToolTip("Re-imports icons from addon sources when no filestore is restored.")
-            options_layout.addWidget(self.fix_icons)
+            restore_layout.addWidget(self.reset_admin)
             self.sanitize = QCheckBox("Sanitize the database for local development")
             self.sanitize.setChecked(True)
             self.sanitize.setToolTip("Neutralizes Odoo, pauses crons, disables mail, and scrubs contacts.")
-            options_layout.addWidget(self.sanitize)
+            restore_layout.addWidget(self.sanitize)
+            layout.addWidget(restore)
+
+            advanced = CollapsibleSection("Advanced options")
+            self.fix_icons = QCheckBox("Repair missing menu icons")
+            self.fix_icons.setChecked(True)
+            self.fix_icons.setToolTip("Re-imports icons from addon sources when no filestore is restored.")
+            advanced.add_widget(self.fix_icons)
             self.keep_download = QCheckBox("Keep the downloaded backup bundle")
-            options_layout.addWidget(self.keep_download)
+            advanced.add_widget(self.keep_download)
             self.save_settings = QCheckBox("Remember these connection settings")
             self.save_settings.setChecked(True)
-            options_layout.addWidget(self.save_settings)
+            advanced.add_widget(self.save_settings)
+            layout.addWidget(advanced)
+
+            danger = QGroupBox("Safety")
+            danger_layout = QVBoxLayout(danger)
+            danger_layout.setSpacing(6)
             self.overwrite = QCheckBox("Replace an existing database without asking")
             self.overwrite.setToolTip("This permanently drops the selected local database before restoring.")
-            self.overwrite.setStyleSheet("color: #b42318;")
-            options_layout.addWidget(self.overwrite)
-            layout.addWidget(options)
-
+            self.overwrite.setObjectName("DangerCheck")
+            danger_layout.addWidget(self.overwrite)
             warning = QLabel("Safety defaults are enabled. Uncheck them only when you understand the effect.")
             warning.setWordWrap(True)
-            layout.addWidget(warning)
+            warning.setObjectName("AppSubtitle")
+            danger_layout.addWidget(warning)
+            layout.addWidget(danger)
+
             buttons = QDialogButtonBox(
                 QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
             )
-            buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Pull backup")
+            ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+            ok_button.setText("Pull backup")
+            ok_button.setObjectName("PrimaryButton")
             buttons.accepted.connect(self.accept)
             buttons.rejected.connect(self.reject)
             layout.addWidget(buttons)
+
+            self.target_edit.setFocus()
 
         def choose_key(self):
             """Choose a local SSH private key."""
@@ -307,54 +533,188 @@ def launch():
             self._worker = None
             self._task_finished = None
             self._refresh_after_task = False
+            self._rows_by_slug = {}
             self.setWindowTitle("odooctl")
             self.setMinimumSize(900, 500)
 
             central = QWidget()
-            layout = QVBoxLayout(central)
-            toolbar = QHBoxLayout()
+            central.setObjectName("CentralWidget")
+            root = QVBoxLayout(central)
+            root.setContentsMargins(16, 16, 16, 12)
+            root.setSpacing(12)
+            root.addWidget(self._build_header())
+
+            splitter = QSplitter(Qt.Orientation.Horizontal)
+            splitter.setChildrenCollapsible(False)
+            splitter.addWidget(self._build_project_panel())
+            splitter.addWidget(self._build_detail_panel())
+            splitter.setStretchFactor(0, 0)
+            splitter.setStretchFactor(1, 1)
+            splitter.setSizes([320, 620])
+            root.addWidget(splitter, 1)
+
+            self.setCentralWidget(central)
+            self.statusBar().showMessage("Ready")
+            self.set_busy(False)
+
+        def _build_header(self):
+            """Build the compact title bar with project-wide (non-contextual) actions."""
+            header = QWidget()
+            header.setObjectName("HeaderBar")
+            layout = QHBoxLayout(header)
+            layout.setContentsMargins(16, 12, 16, 12)
+            layout.setSpacing(8)
+
+            titles = QVBoxLayout()
+            titles.setSpacing(0)
+            title = QLabel("odooctl")
+            title.setObjectName("AppTitle")
+            subtitle = QLabel("Local Odoo project manager")
+            subtitle.setObjectName("AppSubtitle")
+            titles.addWidget(title)
+            titles.addWidget(subtitle)
+            layout.addLayout(titles)
+            layout.addStretch()
+
             self.refresh_button = QPushButton("Refresh")
             self.refresh_button.clicked.connect(self.refresh)
-            toolbar.addWidget(self.refresh_button)
+            layout.addWidget(self.refresh_button)
             self.rescan_button = QPushButton("Rescan")
             self.rescan_button.clicked.connect(self.rescan)
-            toolbar.addWidget(self.rescan_button)
-            self.add_folder_button = QPushButton("Add Folder")
+            layout.addWidget(self.rescan_button)
+            self.add_folder_button = QPushButton("Add Folder…")
             self.add_folder_button.clicked.connect(self.add_folder)
-            toolbar.addWidget(self.add_folder_button)
+            layout.addWidget(self.add_folder_button)
+            return header
+
+        def _build_project_panel(self):
+            """Build the left-hand list of registered projects."""
+            panel = QWidget()
+            layout = QVBoxLayout(panel)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(6)
+
+            label = QLabel("PROJECTS")
+            label.setObjectName("SectionLabel")
+            layout.addWidget(label)
+
+            self.table = QTableWidget(0, 3)
+            self.table.setHorizontalHeaderLabels(["Project", "Status", "HTTP"])
+            self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+            self.table.verticalHeader().setVisible(False)
+            self.table.setAlternatingRowColors(True)
+            self.table.setShowGrid(False)
+            self.table.horizontalHeader().setStretchLastSection(True)
+            self.table.itemSelectionChanged.connect(self.selection_changed)
+            layout.addWidget(self.table, 1)
+            return panel
+
+        def _build_detail_panel(self):
+            """Build the right-hand stack: an empty state, or the selected project's detail."""
+            self.detail_stack = QStackedWidget()
+            self.detail_stack.addWidget(self._wrap_card(self._build_empty_state()))
+            self.detail_stack.addWidget(self._wrap_card(self._build_detail_content()))
+            return self.detail_stack
+
+        def _wrap_card(self, inner):
+            """Wrap a widget in a padded, white, rounded card."""
+            card = QFrame()
+            card.setObjectName("Card")
+            layout = QVBoxLayout(card)
+            layout.setContentsMargins(20, 20, 20, 20)
+            layout.addWidget(inner)
+            return card
+
+        def _build_empty_state(self):
+            """Build the placeholder shown when no project is selected."""
+            empty = QWidget()
+            layout = QVBoxLayout(empty)
+            layout.addStretch()
+            message = QLabel("Select a project to see its details and actions.")
+            message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            message.setObjectName("AppSubtitle")
+            layout.addWidget(message)
+            layout.addStretch()
+            return empty
+
+        def _build_detail_content(self):
+            """Build the selected project's status, info, actions, and activity log."""
+            content = QWidget()
+            layout = QVBoxLayout(content)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(12)
+
+            head = QHBoxLayout()
+            self.detail_name = QLabel("")
+            self.detail_name.setObjectName("AppTitle")
+            head.addWidget(self.detail_name)
+            self.detail_badge = StatusBadge()
+            head.addWidget(self.detail_badge)
+            head.addStretch()
             self.pull_button = QPushButton("Pull Backup…")
+            self.pull_button.setObjectName("PrimaryButton")
             self.pull_button.clicked.connect(self.pull_selected)
-            self.pull_button.setEnabled(False)
-            toolbar.addWidget(self.pull_button)
+            head.addWidget(self.pull_button)
+            layout.addLayout(head)
+
+            info = QFormLayout()
+            info.setSpacing(6)
+            self.detail_http = QLabel("-")
+            info.addRow("HTTP port", self.detail_http)
+            self.detail_postgres = QLabel("-")
+            info.addRow("Postgres port", self.detail_postgres)
+            self.detail_path = QLabel("-")
+            self.detail_path.setObjectName("AppSubtitle")
+            info.addRow("Path", self.detail_path)
+            self.detail_note = QLabel("-")
+            self.detail_note.setWordWrap(True)
+            self.detail_note.setObjectName("AppSubtitle")
+            info.addRow("Detail", self.detail_note)
+            layout.addLayout(info)
+
+            actions = QHBoxLayout()
+            actions.setSpacing(8)
             self.action_buttons = {}
             for action in ("up", "down", "restart", "logs"):
                 button = QPushButton(action.title())
                 button.clicked.connect(lambda _checked=False, name=action: self.run_action(name))
-                button.setEnabled(False)
                 self.action_buttons[action] = button
-                toolbar.addWidget(button)
-            self.open_button = QPushButton("Open")
+                actions.addWidget(button)
+            self.open_button = QPushButton("Open in Browser")
             self.open_button.clicked.connect(self.open_selected)
-            self.open_button.setEnabled(False)
-            toolbar.addWidget(self.open_button)
-            toolbar.addStretch()
-            layout.addLayout(toolbar)
+            actions.addWidget(self.open_button)
+            actions.addStretch()
+            layout.addLayout(actions)
 
-            self.table = QTableWidget(0, 6)
-            self.table.setHorizontalHeaderLabels(["Project", "Status", "HTTP", "Postgres", "Path", "Details"])
-            self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-            self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-            self.table.itemSelectionChanged.connect(self.selection_changed)
-            self.table.horizontalHeader().setStretchLastSection(True)
-            layout.addWidget(self.table)
-
+            log_label = QLabel("ACTIVITY")
+            log_label.setObjectName("SectionLabel")
+            layout.addWidget(log_label)
             self.output = QPlainTextEdit()
             self.output.setReadOnly(True)
             self.output.setPlaceholderText("Select a project and run an action to see its output.")
             self.output.setMaximumBlockCount(2000)
-            layout.addWidget(self.output)
-            self.setCentralWidget(central)
-            self.statusBar().showMessage("Ready")
+            layout.addWidget(self.output, 1)
+            return content
+
+        def show_detail(self, slug):
+            """Show the empty state or populate the detail card for one project."""
+            row = self._rows_by_slug.get(slug) if slug else None
+            if row is None:
+                self.detail_stack.setCurrentIndex(0)
+                return
+            self.detail_stack.setCurrentIndex(1)
+            self.detail_name.setText(row.slug)
+            self.detail_badge.set_state(row.state)
+            self.detail_http.setText(row.http)
+            self.detail_postgres.setText(row.postgres)
+            elided = self.detail_path.fontMetrics().elidedText(
+                row.path, Qt.TextElideMode.ElideMiddle, 440
+            )
+            self.detail_path.setText(elided)
+            self.detail_path.setToolTip(row.path)
+            self.detail_note.setText(row.detail)
 
         def refresh(self):
             """Refresh project state without blocking the window."""
@@ -438,7 +798,8 @@ def launch():
             return item.text() if item else None
 
         def selection_changed(self):
-            """Enable project actions after a table row is selected."""
+            """Show the selected project's detail and enable its actions."""
+            self.show_detail(self.selected_slug())
             self.set_busy(bool(self._thread and self._thread.isRunning()))
 
         def run_action(self, action):
@@ -503,23 +864,26 @@ def launch():
                 self.output.setPlainText(str(result))
                 self.statusBar().showMessage(str(result))
                 return
+            previous = self.selected_slug()
             self.table.setRowCount(0)
-            colors = {
-                "Running": "#2f9e44",
-                "Down": "#868e96",
-                "Partial": "#f08c00",
-                "Unavailable": "#f08c00",
-                "Error": "#e03131",
-            }
+            self._rows_by_slug = {row.slug: row for row in result}
             for row in result:
                 index = self.table.rowCount()
                 self.table.insertRow(index)
-                values = [row.slug, row.state, row.http, row.postgres, row.path, row.detail]
-                for column, value in enumerate(values):
-                    item = QTableWidgetItem(value)
-                    if column == 1:
-                        item.setForeground(QColor(colors.get(row.state, "#212529")))
-                    self.table.setItem(index, column, item)
+                name_item = QTableWidgetItem(row.slug)
+                name_item.setToolTip(row.path)
+                self.table.setItem(index, 0, name_item)
+
+                badge_cell = QWidget()
+                badge_layout = QHBoxLayout(badge_cell)
+                badge_layout.setContentsMargins(6, 2, 6, 2)
+                badge_layout.addWidget(StatusBadge(row.state))
+                badge_layout.addStretch()
+                self.table.setCellWidget(index, 1, badge_cell)
+
+                http_item = QTableWidgetItem(row.http)
+                http_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.table.setItem(index, 2, http_item)
             self.statusBar().showMessage(f"{len(result)} project(s)")
             if not result:
                 roots = "\n".join(f"  - {root}" for root in registry.default_roots())
@@ -528,6 +892,11 @@ def launch():
                     "Use Rescan, or Add Folder to choose the parent directory that contains your projects.\n\n"
                     f"Default roots:\n{roots}"
                 )
+            if previous and previous in self._rows_by_slug:
+                for r in range(self.table.rowCount()):
+                    if self.table.item(r, 0).text() == previous:
+                        self.table.selectRow(r)
+                        break
             self.selection_changed()
 
         def show_rescan_result(self, result):
@@ -568,6 +937,7 @@ def launch():
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("odooctl")
     app.setApplicationVersion(__version__)
+    app.setStyleSheet(APP_STYLESHEET)
     window = ProjectWindow()
     window.show()
     window.refresh()
