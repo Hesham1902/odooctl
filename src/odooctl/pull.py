@@ -45,9 +45,10 @@ def _fmt_mb(n):
 class _ProgressReader:
     """Read a stream while printing a running byte total on one line."""
 
-    def __init__(self, src, label="downloading"):
+    def __init__(self, src, label="downloading", progress=None):
         self.src = src
         self.label = label
+        self.progress = progress
         self.total = 0
         self._start = time.monotonic()
         self._last_render = 0.0
@@ -61,11 +62,19 @@ class _ProgressReader:
         if now - self._last_render > 0.2:
             self._last_render = now
             rate = self.total / max(now - self._start, 1e-9) / 1e6
-            print(f"\r{self.label}: {_fmt_mb(self.total)} ({rate:.1f} MB/s)   ", end="", flush=True)
+            message = f"{self.label}: {_fmt_mb(self.total)} ({rate:.1f} MB/s)"
+            if self.progress:
+                self.progress(message)
+            else:
+                print(f"\r{message}   ", end="", flush=True)
         return block
 
     def finish(self):
-        print(f"\r{self.label}: {_fmt_mb(self.total)} done" + " " * 20, flush=True)
+        message = f"{self.label}: {_fmt_mb(self.total)} done"
+        if self.progress:
+            self.progress(message)
+        else:
+            print(f"\r{message}" + " " * 20, flush=True)
 
 
 def parse_target(spec):
@@ -230,7 +239,9 @@ def find_remote_backup(target, port=None, path=None, key=None):
     return {"sql_gz": sql_gz, "mirror": mirror}
 
 
-def _stream_remote_tar(target, port, remote_dir, remote_sub, dest: Path, key=None, progress=True):
+def _stream_remote_tar(
+    target, port, remote_dir, remote_sub, dest: Path, key=None, progress=True, on_progress=None
+):
     """Extract a remote tar stream with Python so Windows needs no local tar."""
     src = None
     try:
@@ -240,7 +251,11 @@ def _stream_remote_tar(target, port, remote_dir, remote_sub, dest: Path, key=Non
         )
     except FileNotFoundError as exc:
         raise PullError(f"{exc.filename} was not found on PATH. Install it and try again.") from exc
-    reader = _ProgressReader(src.stdout, label="filestore") if progress else src.stdout
+    reader = (
+        _ProgressReader(src.stdout, label="filestore", progress=on_progress)
+        if progress
+        else src.stdout
+    )
     root = dest.resolve()
     failure = None
     try:
@@ -320,12 +335,18 @@ def _cached_sql_gz_is_reusable(target, port, remote, local_sql, key=None):
     return _is_complete_gzip(local_sql)
 
 
-def download(target, port, remote, dest_dir, key=None, with_filestore=False):
+def download(target, port, remote, dest_dir, key=None, with_filestore=False, progress=None):
     """Download an odooctl/odoo.sh raw backup into dest_dir/<base>/ as a bundle.
 
     By default only the .sql.gz is fetched (dev copies rarely need attachments);
     pass with_filestore=True to also stream the remote home/odoo/data tree.
     """
+    def emit(message):
+        if progress:
+            progress(message)
+        else:
+            print(message)
+
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     name = Path(remote["sql_gz"]).name
@@ -335,10 +356,10 @@ def download(target, port, remote, dest_dir, key=None, with_filestore=False):
 
     local_sql = bundle / name
     if _cached_sql_gz_is_reusable(target, port, remote, local_sql, key=key):
-        print(f"reusing cached {name} ({_fmt_mb(local_sql.stat().st_size)})")
+        emit(f"reusing cached {name} ({_fmt_mb(local_sql.stat().st_size)})")
     else:
         if local_sql.exists():
-            print(f"cached {name} is incomplete or corrupt, re-downloading")
+            emit(f"cached {name} is incomplete or corrupt, re-downloading")
             local_sql.unlink()
 
         def _attempt(legacy=False):
@@ -361,8 +382,11 @@ def download(target, port, remote, dest_dir, key=None, with_filestore=False):
         if "yes" in chk.stdout.decode(errors="replace"):
             size = remote_dir_size(target, port, data_dir, key=key)
             if size:
-                print(f"filestore on remote: {size} (compressed stream)")
-            _stream_remote_tar(target, port, mirror, "home/odoo/data", bundle, key=key)
+                emit(f"filestore on remote: {size} (compressed stream)")
+            stream_kwargs = {"key": key}
+            if progress is not None:
+                stream_kwargs["on_progress"] = progress
+            _stream_remote_tar(target, port, mirror, "home/odoo/data", bundle, **stream_kwargs)
     if not with_filestore:
         # drop leftovers of an aborted --with-filestore run so a half filestore
         # never sneaks into the restore

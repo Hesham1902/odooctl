@@ -3,9 +3,11 @@
 import sys
 import webbrowser
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import __version__, compose, registry
 from .commands.common import wait_http
+from .pull_workflow import PullOptions, run_pull
 from .runtime_env import prepare_gui_environment
 
 
@@ -126,6 +128,12 @@ def rescan_projects(roots=()):
     return ProjectScanResult(rows, tuple(sorted(config.get("roots") or ())), len(report.rejected))
 
 
+def pull_project(slug, options, progress=print):
+    """Run the shared pull workflow for a registered project."""
+    resolved_slug, project = registry.resolve(slug)
+    return run_pull(resolved_slug, project, options, progress=progress)
+
+
 def launch():
     """Open the optional desktop project manager and run its event loop."""
     prepare_gui_environment()
@@ -135,8 +143,15 @@ def launch():
         from PySide6.QtWidgets import (
             QAbstractItemView,
             QApplication,
+            QCheckBox,
+            QDialog,
+            QDialogButtonBox,
             QFileDialog,
+            QFormLayout,
+            QGroupBox,
             QHBoxLayout,
+            QLabel,
+            QLineEdit,
             QMainWindow,
             QMessageBox,
             QPlainTextEdit,
@@ -151,17 +166,136 @@ def launch():
             "GUI support is not installed. Run `python -m pip install 'odooctl[gui]'` and try again."
         ) from exc
 
+    class PullDialog(QDialog):
+        """Collect connection and restore choices without crowding the main window."""
+
+        def __init__(self, parent, slug, saved):
+            super().__init__(parent)
+            self.setWindowTitle(f"Pull backup · {slug}")
+            self.setMinimumWidth(560)
+            layout = QVBoxLayout(self)
+
+            intro = QLabel(
+                "Fetch the newest Odoo.sh backup over SSH, restore it locally, "
+                "and choose which safety steps to run."
+            )
+            intro.setWordWrap(True)
+            layout.addWidget(intro)
+
+            connection = QGroupBox("Connection")
+            form = QFormLayout(connection)
+            self.target_edit = QLineEdit(saved.get("from", ""))
+            self.target_edit.setPlaceholderText("ssh://1234567@your-project.odoo.com")
+            form.addRow("SSH target", self.target_edit)
+            self.path_edit = QLineEdit(saved.get("path", ""))
+            self.path_edit.setPlaceholderText("Optional · newest standard backup by default")
+            form.addRow("Remote path", self.path_edit)
+            self.database_edit = QLineEdit(saved.get("db", ""))
+            self.database_edit.setPlaceholderText(f"Optional · defaults to {slug}_pulled")
+            form.addRow("Database name", self.database_edit)
+
+            key_row = QWidget()
+            key_layout = QHBoxLayout(key_row)
+            key_layout.setContentsMargins(0, 0, 0, 0)
+            self.key_edit = QLineEdit(saved.get("key", ""))
+            self.key_edit.setPlaceholderText("Optional · uses your SSH agent/default key")
+            key_layout.addWidget(self.key_edit)
+            key_button = QPushButton("Choose…")
+            key_button.clicked.connect(self.choose_key)
+            key_layout.addWidget(key_button)
+            form.addRow("Private key", key_row)
+            layout.addWidget(connection)
+
+            options = QGroupBox("Restore options")
+            options_layout = QVBoxLayout(options)
+            self.with_filestore = QCheckBox("Include filestore and attachments")
+            self.with_filestore.setToolTip("Downloads a larger backup containing images and attachments.")
+            options_layout.addWidget(self.with_filestore)
+            self.reset_admin = QCheckBox("Reset the main login to admin / admin")
+            self.reset_admin.setChecked(True)
+            self.reset_admin.setToolTip("Makes the restored database immediately accessible locally.")
+            options_layout.addWidget(self.reset_admin)
+            self.fix_icons = QCheckBox("Repair missing menu icons")
+            self.fix_icons.setChecked(True)
+            self.fix_icons.setToolTip("Re-imports icons from addon sources when no filestore is restored.")
+            options_layout.addWidget(self.fix_icons)
+            self.sanitize = QCheckBox("Sanitize the database for local development")
+            self.sanitize.setChecked(True)
+            self.sanitize.setToolTip("Neutralizes Odoo, pauses crons, disables mail, and scrubs contacts.")
+            options_layout.addWidget(self.sanitize)
+            self.keep_download = QCheckBox("Keep the downloaded backup bundle")
+            options_layout.addWidget(self.keep_download)
+            self.save_settings = QCheckBox("Remember these connection settings")
+            self.save_settings.setChecked(True)
+            options_layout.addWidget(self.save_settings)
+            self.overwrite = QCheckBox("Replace an existing database without asking")
+            self.overwrite.setToolTip("This permanently drops the selected local database before restoring.")
+            self.overwrite.setStyleSheet("color: #b42318;")
+            options_layout.addWidget(self.overwrite)
+            layout.addWidget(options)
+
+            warning = QLabel("Safety defaults are enabled. Uncheck them only when you understand the effect.")
+            warning.setWordWrap(True)
+            layout.addWidget(warning)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok
+            )
+            buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Pull backup")
+            buttons.accepted.connect(self.accept)
+            buttons.rejected.connect(self.reject)
+            layout.addWidget(buttons)
+
+        def choose_key(self):
+            """Choose a local SSH private key."""
+            selected, _ = QFileDialog.getOpenFileName(self, "Choose SSH private key", str(Path.home()))
+            if selected:
+                self.key_edit.setText(selected)
+
+        def accept(self):
+            """Validate the minimum connection input before closing the dialog."""
+            if not self.target_edit.text().strip():
+                QMessageBox.warning(self, "SSH target required", "Enter the SSH address shown by Odoo.sh.")
+                self.target_edit.setFocus()
+                return
+            key = self.key_edit.text().strip()
+            if key and not Path(key).expanduser().is_file():
+                QMessageBox.warning(self, "SSH key not found", f"The selected key does not exist:\n{key}")
+                self.key_edit.setFocus()
+                return
+            super().accept()
+
+        def pull_options(self):
+            """Return the selected values as the shared pull workflow interface."""
+            return PullOptions(
+                ssh_target=self.target_edit.text().strip() or None,
+                remote_path=self.path_edit.text().strip() or None,
+                database=self.database_edit.text().strip() or None,
+                ssh_key=self.key_edit.text().strip() or None,
+                with_filestore=self.with_filestore.isChecked(),
+                reset_admin=self.reset_admin.isChecked(),
+                fix_icons=self.fix_icons.isChecked(),
+                sanitize=self.sanitize.isChecked(),
+                keep_download=self.keep_download.isChecked(),
+                overwrite=self.overwrite.isChecked(),
+                save_settings=self.save_settings.isChecked(),
+            )
+
     class TaskWorker(QObject):
         finished = Signal(object)
+        progress = Signal(str)
 
-        def __init__(self, task):
+        def __init__(self, task, with_progress=False):
             super().__init__()
             self.task = task
+            self.with_progress = with_progress
 
         def run(self):
             """Run a backend task outside the GUI thread."""
             try:
-                result = self.task()
+                if self.with_progress:
+                    result = self.task(self.progress.emit)
+                else:
+                    result = self.task()
             except Exception as exc:  # the window should remain usable after a registry error
                 result = exc
             self.finished.emit(result)
@@ -188,6 +322,10 @@ def launch():
             self.add_folder_button = QPushButton("Add Folder")
             self.add_folder_button.clicked.connect(self.add_folder)
             toolbar.addWidget(self.add_folder_button)
+            self.pull_button = QPushButton("Pull Backup…")
+            self.pull_button.clicked.connect(self.pull_selected)
+            self.pull_button.setEnabled(False)
+            toolbar.addWidget(self.pull_button)
             self.action_buttons = {}
             for action in ("up", "down", "restart", "logs"):
                 button = QPushButton(action.title())
@@ -236,7 +374,24 @@ def launch():
                     f"Scanning {directory}...",
                 )
 
-        def start_task(self, task, callback, status):
+        def pull_selected(self):
+            """Open the pull dialog and run the selected backup workflow."""
+            slug = self.selected_slug()
+            if not slug:
+                return
+            dialog = PullDialog(self, slug, registry.load_pull_settings(slug))
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            options = dialog.pull_options()
+            self.output.clear()
+            self.start_task(
+                lambda progress: pull_project(slug, options, progress),
+                self.show_pull_result,
+                f"Pulling backup for {slug}...",
+                progress=True,
+            )
+
+        def start_task(self, task, callback, status, progress=False):
             """Run one backend task in a worker thread and restore the UI afterwards."""
             if self._thread and self._thread.isRunning():
                 return
@@ -244,15 +399,21 @@ def launch():
             self.statusBar().showMessage(status)
             self._task_finished = callback
             self._thread = QThread(self)
-            self._worker = TaskWorker(task)
+            self._worker = TaskWorker(task, with_progress=progress)
             self._worker.moveToThread(self._thread)
             self._thread.started.connect(self._worker.run)
+            if progress:
+                self._worker.progress.connect(self.show_task_progress)
             self._worker.finished.connect(self._task_done)
             self._worker.finished.connect(self._thread.quit)
             self._worker.finished.connect(self._worker.deleteLater)
             self._thread.finished.connect(self._thread.deleteLater)
             self._thread.finished.connect(self._refresh_finished)
             self._thread.start()
+
+        def show_task_progress(self, message):
+            """Append progress emitted by a long-running worker."""
+            self.output.appendPlainText(message)
 
         def _task_done(self, result):
             """Deliver a worker result to the callback on the GUI thread."""
@@ -264,6 +425,7 @@ def launch():
             self.refresh_button.setEnabled(not busy)
             self.rescan_button.setEnabled(not busy)
             self.add_folder_button.setEnabled(not busy)
+            self.pull_button.setEnabled(not busy and self.selected_slug() is not None)
             has_selection = self.selected_slug() is not None
             for button in self.action_buttons.values():
                 button.setEnabled(not busy and has_selection)
@@ -310,6 +472,16 @@ def launch():
             self.statusBar().showMessage(f"{result.slug}: {result.action} complete")
             if result.action != "logs":
                 self._refresh_after_task = True
+
+        def show_pull_result(self, result):
+            """Display the pull workflow log or its error."""
+            if isinstance(result, Exception):
+                self.output.setPlainText(str(result))
+                self.statusBar().showMessage("Pull failed")
+                return
+            self.output.setPlainText(result.output)
+            self.statusBar().showMessage(f"{result.slug}: pull complete")
+            self._refresh_after_task = True
 
         def open_selected(self):
             """Open the selected project's local HTTP URL."""

@@ -165,9 +165,12 @@ Settings -> Privacy & Security. Signing and notarization require an Apple Develo
 account.
 
 The desktop app lists projects, refreshes Docker status, starts and stops stacks,
-restarts the web service, shows recent logs, and opens the local Odoo URL. It is a
-thin window over the existing CLI backend, not a second Docker implementation. The
-CLI remains a separate install for scripts and CI.
+restarts the web service, pulls Odoo.sh backups, shows recent logs, and opens the
+local Odoo URL. The **Pull Backup** dialog keeps the safety defaults visible: include
+filestore, reset admin, repair icons, sanitize, keep the bundle, remember connection
+settings, and explicitly replace an existing database. It is a thin window over the
+existing CLI backend, not a second Docker implementation. The CLI remains a separate
+install for scripts and CI.
 
 ### Linux desktop app
 
@@ -683,6 +686,8 @@ odooctl pull acme --yes            # skip the overwrite prompt (scripts/CI)
 odooctl pull acme --keep-download  # keep the downloaded bundle
 odooctl pull acme --with-filestore # also fetch attachments (large)
 odooctl pull acme --path /backup/x.sql.gz   # one-off different file
+odooctl pull acme --no-reset-admin          # keep restored credentials
+odooctl pull acme --no-fix-icons            # skip icon repair without filestore
 odooctl pull acme --no-sanitize    # skip automatic database neutralization
 ```
 

@@ -549,6 +549,20 @@ def test_pull_with_filestore_skips_icon_repair(happy_pull, tmp_path, monkeypatch
     assert not icon_calls
 
 
+def test_pull_no_fix_icons_skips_icon_repair(happy_pull, tmp_path, monkeypatch):
+    entry, zips, lifecycle = happy_pull
+    monkeypatch.setattr(cli.restore_mod, "restore", lambda *a: {"filestore": False})
+    icon_calls = []
+    monkeypatch.setattr(cli.icons_mod, "fix_icons", lambda *a: icon_calls.append(1))
+    result = CliRunner().invoke(
+        cli.main,
+        ["pull", "acme", "--from", "ssh://acme@acme.odoo.sh", "--no-fix-icons"],
+    )
+    assert result.exit_code == 0, result.output
+    assert not icon_calls
+    assert "icon repair skipped" in result.output
+
+
 def test_pull_keep_download_flag(happy_pull, tmp_path, monkeypatch):
     entry, zips, lifecycle = happy_pull
     result = CliRunner().invoke(cli.main, ["pull", "acme", "--from", "acme@acme.odoo.sh", "--keep-download"])

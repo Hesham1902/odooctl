@@ -1,13 +1,14 @@
 import datetime
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import click
 
-from .. import admin, compose, registry, space, testing
+from .. import admin, compose, space, testing
 from .. import icons as icons_mod
-from .. import pull as pull_mod
+from .. import pull_workflow as pull_workflow_mod
 from .. import restore as restore_mod
 from .. import sanitize as sanitize_mod
 from .common import entry, need_docker, pick_db
@@ -47,138 +48,51 @@ from .root import main
 )
 @click.option("--yes", "-y", is_flag=True, help="Skip the overwrite confirmation.")
 @click.option("--no-sanitize", is_flag=True, help="Skip database neutralization.")
-def pull(project, from_, path, db, no_reset_admin, keep_download, key, save, with_filestore, yes, no_sanitize):
+@click.option(
+    "--no-fix-icons",
+    is_flag=True,
+    help="Skip automatic menu icon repair when no filestore is restored.",
+)
+def pull(
+    project,
+    from_,
+    path,
+    db,
+    no_reset_admin,
+    keep_download,
+    key,
+    save,
+    with_filestore,
+    yes,
+    no_sanitize,
+    no_fix_icons,
+):
     """Pull the latest backup over SSH and restore it."""
     need_docker()
     slug, project_entry = entry(project)
-    saved = registry.load_pull_settings(slug)
-    from_ = from_ or saved.get("from")
-    if not from_:
-        raise click.ClickException(
-            "Pass --from ssh://user@host the first time.\nHint: add --save to remember it for future pulls."
-        )
-    path = path or saved.get("path")
-    key = key or saved.get("key")
-    db = db or saved.get("db")
     try:
-        target, port = pull_mod.parse_target(from_)
-    except pull_mod.PullError as exc:
-        raise click.ClickException(str(exc))
-    if save:
-        registry.save_pull_settings(
-            slug,
-            {
-                "from": from_,
-                "path": path,
-                "key": str(Path(key).expanduser()) if key else None,
-                "db": db,
-            },
-        )
-        click.echo(f"[{slug}] saved pull settings (next time: odooctl pull {slug}).")
-
-    database = db or f"{slug}_pulled"
-    if not db:
-        click.secho(f"(no -d given; restoring as '{database}')", fg="yellow")
-
-    state, _ = compose.service_state(project_entry["path"], project_entry["services"]["db"])
-    if state != "running":
-        raise click.ClickException(
-            f"[{slug}] db container is not running.\nHint: start it with `odooctl up {slug}`."
-        )
-    existing = compose.databases(project_entry["path"], project_entry.get("db_user", "odoo")) or []
-    if database in existing and not yes:
-        click.confirm(f"Database '{database}' already exists. DROP it and restore over it?", abort=True)
-
-    click.echo(f"[{slug}] looking for the latest backup on {target}...")
-    try:
-        remote = pull_mod.find_remote_backup(target, port=port, path=path, key=key)
-        filestore_note = " (filestore available)" if remote.get("mirror") else " (dump only)"
-        click.echo(f"[{slug}] found {remote['sql_gz']}{filestore_note}")
-        if not with_filestore:
-            click.echo(f"[{slug}] skipping filestore (--with-filestore to include attachments)")
-        local = pull_mod.download(
-            target,
-            port,
-            remote,
-            Path(project_entry["path"]) / "backups" / "pulled",
-            key=key,
+        options = pull_workflow_mod.PullOptions(
+            ssh_target=from_,
+            remote_path=path,
+            database=db,
+            ssh_key=str(Path(key).expanduser()) if key else None,
             with_filestore=with_filestore,
+            reset_admin=not no_reset_admin,
+            fix_icons=not no_fix_icons,
+            sanitize=not no_sanitize,
+            keep_download=keep_download,
+            overwrite=yes,
+            save_settings=save,
         )
-    except pull_mod.PullError as exc:
-        raise click.ClickException(str(exc))
-    size_mb = sum(item.stat().st_size for item in local.rglob("*") if item.is_file()) / 1e6
-    click.echo(f"[{slug}] downloaded {local.name}/ ({size_mb:.1f} MB)")
-    if local.is_dir():
-        dumps = sorted(local.glob("*.sql.gz"))
-        source_db = restore_mod._dump_create_target(dumps[0]) if dumps else None
-        if source_db:
-            click.echo(f"[{slug}] source database in dump: '{source_db}' -> will become '{database}'")
-
-    was_running = compose.web_running(project_entry["path"], project_entry)
-    if was_running:
-        click.echo(f"[{slug}] stopping web for the restore...")
-        compose.run(project_entry["path"], "stop", project_entry["services"]["web"])
-    click.echo(f"[{slug}] restoring into '{database}'...")
-    try:
-        info = restore_mod.restore(project_entry["path"], project_entry, local, database)
-    except (ValueError, compose.DockerError) as exc:
-        if was_running:
-            compose.run(project_entry["path"], "start", project_entry["services"]["web"])
-        raise click.ClickException(f"restore failed: {exc}")
-    if with_filestore and not info["filestore"]:
-        click.secho("[!] no filestore found remotely - attachments missing", fg="yellow")
-    for extension in info.get("skipped_extensions") or []:
-        click.secho(
-            f"[!] postgres extension '{extension}' not available locally - skipped "
-            "(install it in your db image if you need it)",
-            fg="yellow",
-        )
-
-    if not info["filestore"]:
-        click.echo(f"[{slug}] no filestore - re-importing menu icons from addon sources...")
-        try:
-            counts = icons_mod.fix_icons(project_entry["path"], project_entry, database)
-            click.secho(
-                f"[{slug}] menu icons: checked {counts.get('checked', 0)}, "
-                f"re-imported {counts.get('fixed', 0)}.",
-                fg="green",
-            )
-        except (compose.DockerError, RuntimeError) as exc:
-            click.secho(f"[!] icon repair failed: {exc}", fg="yellow")
-
-    if not no_reset_admin:
-        try:
-            result = admin.reset_admin(project_entry["path"], project_entry, database)
-            click.secho(
-                f"[{slug}] login ready: admin / admin  (user #{result['id']}, was '{result['old_login']}')",
-                fg="green",
-            )
-        except (compose.DockerError, RuntimeError) as exc:
-            click.secho(f"[!] reset-admin failed: {exc}", fg="yellow")
-
-    if not no_sanitize:
-        click.echo(f"[{slug}] sanitizing (neutralizing) '{database}'...")
-        try:
-            counts = sanitize_mod.sanitize(project_entry["path"], project_entry, database)
-            for key, label in sanitize_mod.LABELS:
-                if counts.get(key):
-                    click.secho(f"[{slug}] {counts[key]:>6}  {label}", fg="green")
-        except (compose.DockerError, RuntimeError) as exc:
-            click.secho(f"[!] sanitize failed: {exc}", fg="yellow")
-
-    if was_running:
-        click.echo(f"[{slug}] starting web back...")
-        compose.run(project_entry["path"], "start", project_entry["services"]["web"])
-
-    if keep_download:
-        click.echo(f"[{slug}] bundle kept at {local}")
-    else:
-        shutil.rmtree(local, ignore_errors=True)
-        click.echo(f"[{slug}] cleaned up download.")
-
-    http_port = project_entry.get("ports", {}).get("http")
-    if http_port:
-        click.secho(f"[{slug}] done -> http://localhost:{http_port}", fg="green")
+        plan = pull_workflow_mod.plan_pull(slug, options)
+        existing = pull_workflow_mod.check_database_ready(project_entry, plan.database)
+        if plan.database in existing and not yes:
+            click.confirm(f"Database '{plan.database}' already exists. DROP it and restore over it?", abort=True)
+            options = replace(options, overwrite=True)
+            plan = replace(plan, options=options)
+        pull_workflow_mod.run_pull(slug, project_entry, options, plan=plan)
+    except pull_workflow_mod.PullWorkflowError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @main.command(section="Database")
