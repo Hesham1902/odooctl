@@ -8,7 +8,7 @@ for integrations and tests that historically accessed them through
 
 import subprocess
 
-from . import admin, compose, dbdiff, logparse, provision, registry, space, testing, vcs, watcher
+from . import admin, compose, dbdiff, logparse, onboarding, provision, registry, space, testing, vcs, watcher
 from . import deps as deps_mod
 from . import icons as icons_mod
 from . import pull as pull_mod
@@ -69,6 +69,7 @@ __all__ = [
     "list_addons",
     "logparse",
     "main",
+    "onboarding",
     "provision",
     "pull_mod",
     "registry",

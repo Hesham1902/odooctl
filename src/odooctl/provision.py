@@ -162,6 +162,11 @@ def init_project(name, parent_dir, version=None, template_slug=None, dry_run=Fal
     data = yaml.safe_load(Path(tmpl_entry["compose_file"]).read_text())
     alloc = _allocator(_all_taken_ports(projects))
     new_data, web_name, db_name = rewrite_compose(data, slug, tmpl_version, alloc)
+    if web_name is None or db_name is None:
+        raise RuntimeError(
+            f"Template '{tmpl_slug}' compose file does not define both a web and a db service; "
+            "cannot use it."
+        )
     ports = ports_of(new_data, web_name, db_name)
 
     plan = {

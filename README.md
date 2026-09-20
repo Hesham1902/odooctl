@@ -139,8 +139,8 @@ release workflow builds separate Apple Silicon and Intel `.dmg` installers plus
 Linux AppImage and `.deb` packages whenever a `v*` tag is pushed:
 
 ```bash
-git tag v0.6.1
-git push origin v0.6.1
+git tag v0.6.2
+git push origin v0.6.2
 ```
 
 The installers are uploaded to the GitHub Release automatically. Open the DMG and
@@ -760,7 +760,29 @@ Drops the database, removes its filestore from disk, and recreates it empty
 
 Starting a new client/project usually means: create folder, find some older project
 with the same Odoo version, copy its compose/dockerfiles, fix names and ports, start
-it, restore a downloaded backup, reset the admin password. `init` does all of it:
+it, restore a downloaded backup, reset the admin password. `init` does all of it,
+either through a guided wizard or a single flag-driven command.
+
+### Guided mode (new users)
+
+Run it with no name in a real terminal and answer a handful of questions (name,
+parent directory, optional backup, Odoo version - skipped when it can be inferred
+or only one is registered, optional addon repos, restore/admin-reset choices):
+
+```bash
+odooctl init
+```
+
+You get a full plan - target folder, ports, container names, backup, addon
+repos - printed *before* anything is touched, with a final
+`Create this project?` confirmation. Answer no (or Ctrl+C) and nothing is
+created, cloned, or registered. If stdin isn't a terminal (e.g. piped/CI),
+`odooctl init` with no name fails immediately with the non-interactive command
+to use instead, rather than hanging on a prompt.
+
+### Flag-driven mode (scripts/automation)
+
+Pass NAME plus flags and it runs immediately, unchanged from before:
 
 ```bash
 # minimal: infer version from the backup, pick a matching template
@@ -769,8 +791,27 @@ odooctl init acme --from ~/Downloads/acme_2026-08-21.zip --parent-dir ~/work
 # explicit version, fresh empty environment (no backup yet)
 odooctl init acme --version 17 --parent-dir ~/work
 
-# preview without touching anything
+# clone one or more addon repos into custom_addons/ before the first start
+odooctl init acme --version 18 --addon-repo https://github.com/OCA/queue.git#18.0
+
+# pull the newest Odoo.sh backup directly over SSH after the new project starts
+odooctl init acme --version 18 --pull-from ssh://1234567@acme.odoo.com
+
+# preview without touching anything (filesystem, Docker, registry, or git)
 odooctl init acme --version 18 --dry-run
+```
+
+Either way, `init` validates what it can up front - Docker availability, the
+chosen template/version, backup readability/format, a free destination folder,
+that the template compose file has both a web and a db service, port
+availability, and (when `--addon-repo` is used) that `git` is on `PATH` - before
+creating anything. Failures name what went wrong, confirm nothing changed, and
+suggest the exact next command, e.g.:
+
+```
+Unrecognized backup format: ~/Downloads/acme.zip
+Hint: Expected a .zip (Odoo.sh export), a .dump/.backup (pg_dump -Fc), or an odooctl backup folder.
+Nothing was changed.
 ```
 
 Step by step, `init`:
@@ -786,31 +827,75 @@ Step by step, `init`:
    ports and your machine's listening ports), and enterprise-addon volume paths are
    rewritten for your home directory (`/Users/...` and `/home/...` both handled).
 4. **Registers** the new project so every other command works immediately.
-5. **Starts it** - and here is the trick: if the template project has already-built
+5. **Clones addon repositories** (if `--addon-repo` was given, or you added any in
+   the wizard) into `custom_addons/`, *before* the first start - so a normal `init`
+   never needs a manual stop/start cycle to pick them up.
+6. **Starts it** - and here is the trick: if the template project has already-built
    images, they are simply retagged for the new project and reused. Setup takes
    **seconds**. Only when no usable image exists does it run a real build (~10 min,
    once per Dockerfile/version per machine). Force a rebuild with `--build`.
-6. **Restores** the backup into a database (named after the backup's metadata, or
-   `--db`) including the filestore, then resets admin credentials to `admin`/`admin`.
-7. **Waits** until Odoo actually answers on its port, then prints the URL.
+7. **Restores or pulls** the backup into a database (named after the backup's metadata,
+   `--db`, or `<slug>_pulled`) including the filestore when selected, then applies
+   the configured admin reset and sanitization safety steps.
+8. **Waits** until Odoo actually answers on its port, then prints the URL.
 
 Options:
 
 | Option | Meaning |
 |---|---|
 | `--from FILE_OR_DIR` | Backup to restore (.zip/.dump/dir) |
+| `--pull-from SSH_TARGET` | Pull the newest remote backup over SSH after startup |
+| `--pull-path PATH` | Remote backup path for `--pull-from` (default: newest standard backup) |
+| `--pull-key FILE` | SSH private key for `--pull-from` |
+| `--pull-with-filestore` | Include attachments in a remote pull |
+| `--pull-no-reset-admin` | Keep remote credentials in a remote pull |
+| `--pull-no-sanitize` | Skip local sanitization in a remote pull |
+| `--pull-no-fix-icons` | Skip menu icon repair in a remote pull |
+| `--pull-keep-download` | Keep the downloaded remote bundle |
+| `--pull-yes` | Replace an existing local pull database without asking |
+| `--pull-save` | Remember SSH settings for future `odooctl pull PROJECT` runs |
 | `--version, -v` | Odoo version like `18` (or inferred from backup) |
 | `--template, -t` | Force a specific registered project as template |
 | `--db, -d` | Database name for the restore |
 | `--parent-dir, -p` | Where to create the folder (default: first scan root) |
+| `--addon-repo URL[#REF]` | Clone an addon repo into `custom_addons/` before starting (repeatable; `REF` is a branch/tag) |
 | `--build` | Force a real image build instead of reuse |
 | `--no-build` | Start without building anything |
 | `--no-reset-admin` | Keep restored credentials as-is |
 | `--dry-run` | Print the plan; create nothing |
 
+Run with no `NAME` in a terminal for the guided wizard instead of flags.
+
 > **Why image reuse matters:** Docker layer caches do *not* survive being copied
 > between differently-named projects - a naive rebuild repeats every `pip install`
 > layer. Reusing the built image avoids that entirely.
+
+### `--addon-repo` and the direct-addon layout
+
+`custom_addons/` is bind-mounted straight into Odoo's addons path, so Odoo only
+sees modules that sit **directly** under it (`custom_addons/<module>/__manifest__.py`).
+`--addon-repo` clones into the project's `custom_addons/` workflow and detects the
+repository layout automatically:
+
+- **Single-module repo** (manifest at the repo root) - ready immediately, nothing
+  else to do.
+- **Multi-module repo in a new empty project** (e.g. OCA-style, manifests one
+  level down) - when it is the only repository requested, the repository contents
+  (including `.git`) are placed directly in `custom_addons/`, so every addon is
+  exactly where Odoo expects it.
+- **Multi-module repo with existing addons or other repositories** - the Git
+  checkout stays intact at `custom_addons/<repo-name>/`, and `init` automatically
+  adds `/mnt/extra-addons/<repo-name>` (or the actual detected container mount)
+  to `config/odoo.conf`'s `addons_path`. All modules become visible to Odoo
+  without flattening or destroying the repository. If the project uses a custom
+  compose/config layout that cannot be detected, `init` reports the exact
+  `addons_path` change required instead of silently leaving modules invisible.
+- **Clone failure or an already-existing folder** - reported as a warning with the
+  manual `git clone` command to retry; an existing `custom_addons/` subfolder is
+  never overwritten, and the rest of `init` still completes.
+- A `requirements.txt` in the cloned repo is flagged too: Python dependencies are
+  never installed automatically - add them to `odoo.Dockerfile` and rebuild
+  (`--build`) if the module needs them.
 
 ## `test` - running addon tests in isolation
 
