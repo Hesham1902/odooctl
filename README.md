@@ -134,18 +134,19 @@ reads it dynamically), and it is what the update check compares against.
 ### Product website and releases
 
 The public site lives in `website/` and deploys with `.github/workflows/pages.yml`.
-Enable **Settings -> Pages -> GitHub Actions** once in the repository. The macOS
-release workflow builds separate Apple Silicon and Intel `.dmg` installers whenever a
-`v*` tag is pushed:
+Enable **Settings -> Pages -> GitHub Actions** once in the repository. The desktop
+release workflow builds separate Apple Silicon and Intel `.dmg` installers plus
+Linux AppImage and `.deb` packages whenever a `v*` tag is pushed:
 
 ```bash
-git tag v0.6.0
-git push origin v0.6.0
+git tag v0.6.1
+git push origin v0.6.1
 ```
 
 The installers are uploaded to the GitHub Release automatically. Open the DMG and
-drag odooctl to Applications. The website downloads the latest matching installer
-from that release. Zip archives remain available for scripted extraction.
+drag odooctl to Applications, or use the Linux package that matches your system.
+The website downloads the latest matching installer from that release. Zip archives
+remain available for scripted extraction.
 
 ### macOS
 
@@ -158,15 +159,29 @@ from that release. Zip archives remain available for scripted extraction.
 4. Launch odooctl, then use **Rescan** or **Add Folder** to register the parent folder
    that contains your Odoo projects.
 
-The first DMG release is not signed or notarized yet. macOS may show a security warning
-on first launch. Use the app's contextual **Open** action once, or approve it in
-System Settings -> Privacy & Security. Signing and notarization require an Apple
-Developer account and will be added before distributing beyond trusted testers.
+The macOS DMG is not signed or notarized yet. macOS may show a security warning on
+first launch. Use the app's contextual **Open** action once, or approve it in System
+Settings -> Privacy & Security. Signing and notarization require an Apple Developer
+account.
 
 The desktop app lists projects, refreshes Docker status, starts and stops stacks,
 restarts the web service, shows recent logs, and opens the local Odoo URL. It is a
 thin window over the existing CLI backend, not a second Docker implementation. The
 CLI remains a separate install for scripts and CI.
+
+### Linux desktop app
+
+The Linux desktop packages target x86_64 systems and require Docker Engine or Docker
+Desktop to be installed and running.
+
+- **AppImage:** download `odooctl-linux-x86_64.AppImage`, make it executable with
+  `chmod +x odooctl-linux-x86_64.AppImage`, then launch it.
+- **Debian/Ubuntu:** download `odooctl-linux-x86_64.deb` and install it with
+  `sudo apt install ./odooctl-linux-x86_64.deb`.
+
+The AppImage is portable and needs no system package manager. The `.deb` integrates
+the app into the desktop menu. Both packages are free and include the GUI runtime;
+the CLI remains available as a separate install for scripts and CI.
 
 ### Windows
 

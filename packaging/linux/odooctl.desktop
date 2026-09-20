@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Odooctl
+Comment=Manage local Odoo Docker environments
+Exec=odooctl-gui %U
+Icon=odooctl
+Terminal=false
+Categories=Development;
+StartupWMClass=odooctl

@@ -1,4 +1,4 @@
-name: Build macOS app
+name: Build desktop release
 
 on:
   push:
@@ -35,6 +35,15 @@ jobs:
 
       - name: Install app dependencies
         run: python -m pip install -e ".[dev,gui]" pyinstaller
+
+      - name: Verify release version
+        if: github.ref_type == 'tag'
+        run: |
+          app_version="$(python -c 'from odooctl import __version__; print(__version__)')"
+          test "${GITHUB_REF_NAME#v}" = "$app_version" || {
+            echo "Tag ${GITHUB_REF_NAME} does not match app version ${app_version}."
+            exit 1
+          }
 
       - name: Run tests
         run: |
@@ -109,4 +118,100 @@ jobs:
           "dist/odooctl-macos-${{ matrix.arch }}.sha256"
           "dist/odooctl-macos-${{ matrix.arch }}.dmg"
           "dist/odooctl-macos-${{ matrix.arch }}.dmg.sha256"
+          --clobber
+
+  build-linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install app dependencies
+        run: python -m pip install -e ".[dev,gui]" pyinstaller
+
+      - name: Verify release version
+        if: github.ref_type == 'tag'
+        run: |
+          app_version="$(python -c 'from odooctl import __version__; print(__version__)')"
+          test "${GITHUB_REF_NAME#v}" = "$app_version" || {
+            echo "Tag ${GITHUB_REF_NAME} does not match app version ${app_version}."
+            exit 1
+          }
+
+      - name: Run tests
+        run: |
+          ruff check src tests
+          pytest -q
+
+      - name: Install Linux packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            binutils desktop-file-utils libdbus-1-3 libegl1 libfontconfig1 libfreetype6 libgl1 \
+            libx11-6 libx11-xcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-render0 libxcb-shape0 libxcb-shm0 \
+            libxcb-sync1 libxcb-xfixes0 libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0
+          curl --fail --location --retry 3 \
+            --connect-timeout 30 \
+            --max-time 180 \
+            --output /tmp/appimagetool \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+
+      - name: Build Linux desktop packages
+        env:
+          APPIMAGETOOL: /tmp/appimagetool
+        run: packaging/linux/build.sh dist
+
+      - name: Validate Linux packages
+        run: |
+          desktop-file-validate packaging/linux/odooctl.desktop
+          dpkg-deb --info dist/odooctl-linux-x86_64.deb
+          file dist/odooctl-linux-x86_64.AppImage dist/odooctl-linux-x86_64.deb
+          test -s dist/odooctl-linux-x86_64.AppImage
+          test -s dist/odooctl-linux-x86_64.deb
+
+          set +e
+          QT_QPA_PLATFORM=offscreen timeout 10s build/linux/dist/odooctl-gui \
+            >/tmp/odooctl-gui.log 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 124 ]; then
+            cat /tmp/odooctl-gui.log
+            echo "GUI executable exited before the smoke-test timeout (status $status)."
+            exit "$status"
+          fi
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create release if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ steps.release.outputs.tag }}" >/dev/null 2>&1 || \
+            gh release create "${{ steps.release.outputs.tag }}" --title "${{ steps.release.outputs.tag }}" --generate-notes || \
+            gh release view "${{ steps.release.outputs.tag }}" >/dev/null
+
+      - name: Upload Linux packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload
+          "${{ steps.release.outputs.tag }}"
+          "dist/odooctl-linux-x86_64.AppImage"
+          "dist/odooctl-linux-x86_64.AppImage.sha256"
+          "dist/odooctl-linux-x86_64.deb"
+          "dist/odooctl-linux-x86_64.deb.sha256"
           --clobber
