@@ -773,6 +773,11 @@ or only one is registered, optional addon repos, restore/admin-reset choices):
 odooctl init
 ```
 
+When asked whether to add an addon repository, answer `y` and enter its URL on
+the next line, or paste the URL directly at the yes/no prompt. Docker must be
+running before the wizard starts; `--dry-run` is the exception and does not
+need a Docker daemon.
+
 You get a full plan - target folder, ports, container names, backup, addon
 repos - printed *before* anything is touched, with a final
 `Create this project?` confirmation. Answer no (or Ctrl+C) and nothing is

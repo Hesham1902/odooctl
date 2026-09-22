@@ -39,7 +39,7 @@ def need_docker():
         available = compose.daemon_available()
     if not available:
         raise click.ClickException(
-            "Docker daemon not reachable. Start Docker Desktop and try again.\n"
+            "Docker daemon not reachable. Start Docker Desktop or OrbStack and try again.\n"
             "Hint: verify Docker with `docker info`."
         )
 

@@ -341,6 +341,57 @@ def test_init_interactive_wizard_can_choose_remote_pull(tmp_path, monkeypatch):
     assert pulled[0][1].save_settings is True
 
 
+def test_init_interactive_wizard_accepts_addon_url_at_confirmation_prompt(tmp_path, monkeypatch):
+    _register_template(tmp_path, slug="tmpl18", version="18")
+    monkeypatch.setattr(onboarding, "stdin_is_interactive", lambda: True)
+    _no_op_full_boot(monkeypatch)
+    monkeypatch.setattr(subprocess, "run", _fake_git_clone())
+
+    answers = "\n".join(
+        [
+            "acme",
+            str(tmp_path),
+            "",  # backup: none
+            "n",  # do not pull a remote backup
+            "git@github-personal:YDS-Devs/Waffarha.git",  # URL entered directly
+            "Staging",
+            "n",  # no more repos
+            "y",  # confirm creation
+            "",
+        ]
+    )
+
+    result = CliRunner().invoke(cli.main, ["init"], input=answers)
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "acme" / "custom_addons" / "waffarha" / "__manifest__.py").is_file()
+
+
+def test_init_interactive_fails_before_prompting_when_docker_is_unavailable(monkeypatch):
+    monkeypatch.setattr(onboarding, "stdin_is_interactive", lambda: True)
+    monkeypatch.setattr(cli.compose, "daemon_available", lambda: False)
+
+    result = CliRunner().invoke(cli.main, ["init"])
+
+    assert result.exit_code != 0
+    assert "Docker daemon not reachable" in result.output
+    assert "Docker Desktop or OrbStack" in result.output
+    assert "Project name" not in result.output
+
+
+def test_init_dry_run_does_not_require_docker(tmp_path, monkeypatch):
+    _register_template(tmp_path)
+    monkeypatch.setattr(cli.compose, "daemon_available", lambda: False)
+
+    result = CliRunner().invoke(
+        cli.main,
+        ["init", "acme", "--version", "18", "--parent-dir", str(tmp_path), "--dry-run"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "dry run - nothing created" in result.output
+
+
 # ---------------------------------------------------------------------------
 # Interactive wizard
 # ---------------------------------------------------------------------------

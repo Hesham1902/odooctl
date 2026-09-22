@@ -217,13 +217,16 @@ def _run_init_wizard(
         db = db or click.prompt("Database name for the pull", default=f"{provision.slugify(name)}_pulled")
 
     addon_repos = list(addon_repos or ())
-    if click.confirm("Add an addon repository to clone into custom_addons/?", default=False):
-        while True:
-            url = click.prompt("  Repo URL (git clone target)").strip()
-            ref = click.prompt("  Branch/tag (blank = default branch)", default="", show_default=False).strip()
-            addon_repos.append(f"{url}#{ref}" if ref else url)
-            if not click.confirm("Add another addon repository?", default=False):
-                break
+    answer = click.prompt(
+        "Add an addon repository? (y/n, or paste the repository URL)", default="n"
+    ).strip()
+    while answer.lower() not in {"", "n", "no"}:
+        url = click.prompt("  Repo URL (git clone target)").strip() if answer.lower() in {"y", "yes"} else answer
+        ref = click.prompt("  Branch/tag (blank = default branch)", default="", show_default=False).strip()
+        addon_repos.append(f"{url}#{ref}" if ref else url)
+        answer = click.prompt(
+            "Add another addon repository? (y/n, or paste the repository URL)", default="n"
+        ).strip()
 
     return {
         "name": name,
@@ -352,6 +355,8 @@ def init(
                 "  odooctl init acme --from ~/Downloads/acme.zip\n"
                 "Hint: run `odooctl init` with no NAME in a real terminal for the guided setup."
             )
+        if not dry_run:
+            need_docker()
         answers = _run_init_wizard(
             version=version,
             template=template,
@@ -400,7 +405,8 @@ def init(
             pull_keep_download, pull_yes)) and not pull_from:
         raise click.ClickException("--pull-* options require --pull-from SSH_TARGET.")
 
-    need_docker()
+    if not dry_run and not interactive:
+        need_docker()
 
     try:
         addon_specs = onboarding.parse_addon_repo_specs(addon_repos)
