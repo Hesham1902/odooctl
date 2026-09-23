@@ -112,24 +112,41 @@ odooctl gui
 
 ### Update notices
 
-`odooctl` checks once a day whether a newer version is on GitHub. When your copy
-is behind, commands start with a yellow note like:
+`odooctl` checks once a day for the latest published GitHub Release. When your
+copy is behind, CLI commands show a yellow note and the desktop app shows a
+button in its status bar:
 
 ```
 odooctl 0.5.0 is available (you have 0.4.0).
-Update: cd /path/to/odooctl && git pull, then reinstall if you used pipx/uv.
+Release and downloads: https://github.com/Hesham1902/odooctl/releases/tag/v0.5.0
 ```
 
-The check fetches one small file, times out after 3 seconds, and never breaks or
-slows down a command when the network is unavailable. Disable it with:
+Open the release page to download a new desktop installer. For a source install,
+pull your clone and reinstall using the same pipx, uv, or venv method you used
+before:
+
+```bash
+cd /path/to/odooctl
+git pull
+pipx reinstall odooctl                # if installed with pipx
+uv tool upgrade odooctl --reinstall   # if installed with uv
+.venv/bin/python -m pip install -e .  # if installed in the example venv
+```
+
+On Windows, use the matching `.venv\Scripts\python` path for the venv command.
+The CLI check uses a two-second network timeout and may delay the first
+command after its daily cache expires. Network failures stay quiet and are
+retried after an hour. The desktop check runs in the background. Disable checks
+with:
 
 ```bash
 export ODOOCTL_NO_UPDATE_CHECK=1
 ```
 
-To ship a new version, bump `__version__` in `src/odooctl/__init__.py` and push
-to `main` - that file is the single source of truth for the version (pyproject
-reads it dynamically), and it is what the update check compares against.
+To ship a new version, bump `__version__` in `src/odooctl/__init__.py` and
+push a matching `v*` tag. That file is the package version source. Update
+notices start only after the release workflow publishes the tag with all
+desktop packages attached.
 
 ### Product website and releases
 
@@ -143,7 +160,8 @@ git tag v0.6.2
 git push origin v0.6.2
 ```
 
-The installers are uploaded to the GitHub Release automatically. Open the DMG and
+The workflow keeps a new release as a draft while it builds and uploads every
+package. It publishes the release after all build jobs succeed. Open the DMG and
 drag odooctl to Applications, or use the Linux package that matches your system.
 The website downloads the latest matching installer from that release. Zip archives
 remain available for scripted extraction.

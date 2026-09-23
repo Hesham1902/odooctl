@@ -1,11 +1,12 @@
 """Optional desktop project manager backed by the odooctl registry."""
 
 import sys
+import threading
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import __version__, compose, registry
+from . import __version__, compose, registry, update
 from .commands.common import wait_http
 from .pull_workflow import PullOptions, run_pull
 from .runtime_env import prepare_gui_environment
@@ -300,7 +301,8 @@ def launch():
     """Open the optional desktop project manager and run its event loop."""
     prepare_gui_environment()
     try:
-        from PySide6.QtCore import QObject, Qt, QThread, Signal
+        from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
+        from PySide6.QtGui import QDesktopServices
         from PySide6.QtWidgets import (
             QAbstractItemView,
             QApplication,
@@ -551,6 +553,9 @@ def launch():
                 result = exc
             self.finished.emit(result)
 
+    class UpdateSignals(QObject):
+        finished = Signal(object)
+
     class ProjectWindow(QMainWindow):
         def __init__(self):
             super().__init__()
@@ -559,6 +564,8 @@ def launch():
             self._task_finished = None
             self._refresh_after_task = False
             self._rows_by_slug = {}
+            self._update_signals = UpdateSignals()
+            self._update_signals.finished.connect(self.show_update_notice)
             self.setWindowTitle("odooctl")
             self.setMinimumSize(900, 500)
 
@@ -580,7 +587,38 @@ def launch():
 
             self.setCentralWidget(central)
             self.statusBar().showMessage("Ready")
+            self.update_button = QPushButton()
+            self.update_button.setObjectName("UpdateButton")
+            self.update_button.hide()
+            self.update_button.clicked.connect(self.open_update_release)
+            self.statusBar().addPermanentWidget(self.update_button)
+            self.update_button.hide()
+            self._update_version = None
             self.set_busy(False)
+
+        def check_for_updates(self):
+            """Check in a daemon thread so a slow network never freezes the window."""
+            signals = self._update_signals
+
+            def run():
+                try:
+                    latest = update.check_for_update()
+                except Exception:
+                    latest = None
+                signals.finished.emit(latest)
+
+            threading.Thread(target=run, name="odooctl-update-check", daemon=True).start()
+
+        def show_update_notice(self, latest):
+            if not isinstance(latest, str):
+                return
+            self._update_version = latest
+            self.update_button.setText(f"odooctl {latest} available · View release")
+            self.update_button.show()
+
+        def open_update_release(self):
+            if self._update_version:
+                QDesktopServices.openUrl(QUrl(update.release_url(self._update_version)))
 
         def _build_header(self):
             """Build the compact title bar with project-wide (non-contextual) actions."""
@@ -992,4 +1030,5 @@ def launch():
     window = ProjectWindow()
     window.show()
     window.refresh()
+    window.check_for_updates()
     return app.exec()

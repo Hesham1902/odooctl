@@ -15,8 +15,51 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Resolve release tag
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_TAG}"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Invalid release tag: $tag"
+            exit 1
+          }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          app_version="$(PYTHONPATH=src python3 -c 'from odooctl import __version__; print(__version__)')"
+          test "${RELEASE_TAG#v}" = "$app_version" || {
+            echo "Tag $RELEASE_TAG does not match app version $app_version."
+            exit 1
+          }
+
+      - name: Prepare draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || \
+            gh release create "$RELEASE_TAG" --draft --title "$RELEASE_TAG" --generate-notes
+
   build:
     name: macOS ${{ matrix.arch }}
+    needs: prepare
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -28,6 +71,8 @@ jobs:
             arch: x86_64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - uses: actions/setup-python@v5
         with:
@@ -90,30 +135,12 @@ jobs:
             "dist/odooctl-macos-${{ matrix.arch }}.dmg"
           shasum -a 256 "dist/odooctl-macos-${{ matrix.arch }}.dmg" > "dist/odooctl-macos-${{ matrix.arch }}.dmg.sha256"
 
-      - name: Resolve release tag
-        id: release
-        shell: bash
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Create release if needed
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "${{ steps.release.outputs.tag }}" >/dev/null 2>&1 || \
-            gh release create "${{ steps.release.outputs.tag }}" --title "${{ steps.release.outputs.tag }}" --generate-notes || \
-            gh release view "${{ steps.release.outputs.tag }}" >/dev/null
-
       - name: Upload app
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release upload
-          "${{ steps.release.outputs.tag }}"
+          "${{ needs.prepare.outputs.tag }}"
           "dist/odooctl-macos-${{ matrix.arch }}.zip"
           "dist/odooctl-macos-${{ matrix.arch }}.sha256"
           "dist/odooctl-macos-${{ matrix.arch }}.dmg"
@@ -122,9 +149,12 @@ jobs:
 
   build-linux:
     name: Linux x86_64
+    needs: prepare
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - uses: actions/setup-python@v5
         with:
@@ -186,32 +216,37 @@ jobs:
             exit "$status"
           fi
 
-      - name: Resolve release tag
-        id: release
-        shell: bash
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
-          fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Create release if needed
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release view "${{ steps.release.outputs.tag }}" >/dev/null 2>&1 || \
-            gh release create "${{ steps.release.outputs.tag }}" --title "${{ steps.release.outputs.tag }}" --generate-notes || \
-            gh release view "${{ steps.release.outputs.tag }}" >/dev/null
-
       - name: Upload Linux packages
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release upload
-          "${{ steps.release.outputs.tag }}"
+          "${{ needs.prepare.outputs.tag }}"
           "dist/odooctl-linux-x86_64.AppImage"
           "dist/odooctl-linux-x86_64.AppImage.sha256"
           "dist/odooctl-linux-x86_64.deb"
           "dist/odooctl-linux-x86_64.deb.sha256"
           --clobber
+
+  publish:
+    needs: [prepare, build, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          for expected in \
+            odooctl-macos-arm64.dmg \
+            odooctl-macos-x86_64.dmg \
+            odooctl-linux-x86_64.AppImage \
+            odooctl-linux-x86_64.deb; do
+            grep -Fxq "$expected" <<< "$assets" || {
+              echo "Release is missing $expected"
+              exit 1
+            }
+          done
+          gh release edit "$RELEASE_TAG" --draft=false

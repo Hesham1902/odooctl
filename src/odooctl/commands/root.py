@@ -91,6 +91,8 @@ def main(ctx, debug):
     ctx.ensure_object(dict)
     ctx.obj["debug"] = debug
     ctx.obj.setdefault("timings", [])
+    if ctx.invoked_subcommand in {"gui", "desktop"}:
+        return  # The desktop window runs its own check outside the GUI thread.
     latest = update_mod.check_for_update()
     if latest:
         click.secho(update_mod.update_notice(latest), fg="yellow", err=True)

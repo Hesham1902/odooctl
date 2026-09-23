@@ -127,6 +127,56 @@ def test_gui_command_explains_optional_dependency(monkeypatch):
     assert "install gui" in result.output
 
 
+def test_gui_command_defers_update_check_to_window(monkeypatch):
+    monkeypatch.delenv("ODOOCTL_NO_UPDATE_CHECK", raising=False)
+    monkeypatch.setattr(
+        gui.update,
+        "check_for_update",
+        lambda: (_ for _ in ()).throw(AssertionError("CLI checked before opening the window")),
+    )
+    monkeypatch.setattr(gui, "launch", lambda: 0)
+    result = CliRunner().invoke(main, ["gui"])
+    assert result.exit_code == 0, result.output
+
+
+def test_desktop_shows_update_without_blocking_project_refresh(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.delenv("ODOOCTL_NO_UPDATE_CHECK", raising=False)
+    monkeypatch.setattr(gui.update, "check_for_update", lambda: "99.0.0")
+    monkeypatch.setattr(gui, "load_project_status", lambda: [])
+
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QPushButton
+
+    app = QApplication.instance() or QApplication([])
+    observed = []
+    finished = [False]
+
+    def inspect():
+        if finished[0]:
+            return
+        windows = [window for window in app.topLevelWidgets() if window.windowTitle() == "odooctl"]
+        if windows:
+            button = windows[0].findChild(QPushButton, "UpdateButton")
+            if button and button.isVisible():
+                observed.append(button.text())
+                windows[0].close()
+                app.quit()
+                return
+        QTimer.singleShot(10, inspect)
+
+    timeout = QTimer()
+    timeout.setSingleShot(True)
+    timeout.timeout.connect(app.quit)
+    QTimer.singleShot(0, inspect)
+    timeout.start(3000)
+    result = gui.launch()
+    finished[0] = True
+    timeout.stop()
+    assert result == 0
+    assert observed == ["odooctl 99.0.0 available · View release"]
+
+
 def test_rewrite_compose_localizes_windows_home_path(tmp_path):
     data = {
         "services": {
