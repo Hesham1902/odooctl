@@ -30,9 +30,14 @@ def list_candidate_users(project_path, entry, db):
     return rows
 
 
-def pick_user(candidates, user_id=None):
+def pick_user(candidates, user_id=None, login=None):
     if user_id:
         return user_id
+    # A user that already owns the login is the admin; resetting another one
+    # would fail Odoo's unique-login check.
+    owner = next((c[0] for c in candidates if login and c[1] == login), None)
+    if owner:
+        return owner
     if len(candidates) >= 2:
         return candidates[1][0]
     if candidates:
@@ -42,7 +47,7 @@ def pick_user(candidates, user_id=None):
 
 def reset_admin(project_path, entry, db, login="admin", password="admin", user_id=None):
     candidates = list_candidate_users(project_path, entry, db)
-    target = pick_user(candidates, user_id)
+    target = pick_user(candidates, user_id, login)
     if not target:
         raise RuntimeError(f"No usable internal user found in '{db}'. Pass --user-id explicitly.")
     old = next((c for c in candidates if c[0] == target), (target, "?", "?"))

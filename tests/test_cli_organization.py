@@ -28,6 +28,7 @@ def test_root_help_groups_commands_and_shows_compatibility_aliases():
         assert section in result.output
     assert "open (url)" in result.output
     assert "space (df)" in result.output
+    assert "doctor" in result.output
     assert "gc-deep" not in result.output
 
 

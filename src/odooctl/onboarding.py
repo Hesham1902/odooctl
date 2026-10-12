@@ -322,15 +322,17 @@ def configure_nested_addon_paths(project_entry, results):
 
     lines = text.splitlines(keepends=True)
     line_index = next(
-        (index for index, line in enumerate(lines) if line.lstrip().startswith("addons_path") and "=" in line),
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.lstrip().startswith("addons_path") and "=" in line
+        ),
         None,
     )
     if line_index is None:
         for result in nested:
             result.status = "error"
-            result.message += (
-                f"\n      {config_path} has no addons_path setting; add one containing the repository directory."
-            )
+            result.message += f"\n      {config_path} has no addons_path setting; add one containing the repository directory."
         return results
 
     line = lines[line_index]
@@ -392,7 +394,9 @@ def validate_backup(path: Path):
             )
     elif fmt == "odooctl_dir":
         if not (path / "db.dump").exists():
-            raise InitError(f"{path} is missing db.dump.", hint="Point --from at a valid odooctl backup folder.")
+            raise InitError(
+                f"{path} is missing db.dump.", hint="Point --from at a valid odooctl backup folder."
+            )
     elif fmt == "odoosh_raw":
         if not list(path.glob("*.sql.gz")):
             raise InitError(
@@ -406,7 +410,10 @@ def validate_backup(path: Path):
 # ---------------------------------------------------------------------------
 
 _HINTS = (
-    ("No registered projects to use as template", "Run `odooctl discover` to register at least one project first."),
+    (
+        "No registered projects to use as template",
+        "Run `odooctl discover` to register at least one project first.",
+    ),
     ("Cannot derive a folder name", "Pick a name with at least one letter or digit."),
     (
         "Unknown template",
@@ -426,7 +433,10 @@ _HINTS = (
         "Choose a different name or --parent-dir, or remove the old one with "
         "`odooctl remove SLUG --purge-folder`.",
     ),
-    ("No free port found", "Free up local ports or stop unused projects with `odooctl down SLUG`, then retry."),
+    (
+        "No free port found",
+        "Free up local ports or stop unused projects with `odooctl down SLUG`, then retry.",
+    ),
     (
         "does not define both a web and a db service",
         "Pick a different --template - run `odooctl projects` to see what's registered.",

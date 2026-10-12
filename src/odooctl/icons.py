@@ -15,11 +15,19 @@ import glob
 import json
 import os
 
+try:
+    from odoo.modules.module import get_module_path
+except ImportError:
+    def get_module_path(module, display_warning=False):
+        return None
+
 checked = 0
 fixed = 0
 missing_sources = []
 
-menus = env['ir.ui.menu'].with_context(active_test=False).search([
+# full_list: ir.ui.menu.search otherwise drops menus hidden by groups
+# (e.g. Link Tracker needs debug mode), leaving their icons unrepaired
+menus = env['ir.ui.menu'].with_context(active_test=False, **{'ir.ui.menu.full_list': True}).search([
     ('web_icon', '!=', False), ('web_icon', '!=', ''),
 ])
 
@@ -42,7 +50,8 @@ if has_icon_field and legacy:
 
 for menu in menus:
     module, sep, path = (menu.web_icon or '').partition(',')
-    if not sep or not path:
+    # "fa fa-cubes,#color,#background" is a Font Awesome icon, not a file
+    if not sep or not path or module.startswith('fa '):
         continue
     checked += 1
 
@@ -69,14 +78,16 @@ for menu in menus:
         continue
 
     data = None
-    for root in roots:
-        for prefix in ('', 'odoo/addons'):
-            candidate = os.path.join(root, prefix, module, path)
-            if os.path.isfile(candidate):
-                with open(candidate, 'rb') as fh:
-                    data = fh.read()
-                break
-        if data is not None:
+    # the configured addons_path first (covers enterprise and any extra mount),
+    # then the fixed roots as a fallback
+    module_dir = get_module_path(module, display_warning=False)
+    candidates = [os.path.join(module_dir, path)] if module_dir else []
+    candidates += [os.path.join(root, prefix, module, path)
+                   for root in roots for prefix in ('', 'odoo/addons')]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            with open(candidate, 'rb') as fh:
+                data = fh.read()
             break
     if data is None:
         missing_sources.append(menu.web_icon)

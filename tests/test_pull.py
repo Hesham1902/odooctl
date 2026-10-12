@@ -44,11 +44,7 @@ def test_parse_target_rejects_garbage():
         pull.parse_target("")
 
 
-FOUND_OUTPUT = (
-    b"ODOOCTL_OK\n"
-    b"SQL_GZ=/backup.daily/db_20260821.sql.gz\n"
-    b"MIRROR=/backup.daily/db_20260821\n"
-)
+FOUND_OUTPUT = b"ODOOCTL_OK\nSQL_GZ=/backup.daily/db_20260821.sql.gz\nMIRROR=/backup.daily/db_20260821\n"
 
 
 def test_find_remote_backup_uses_a_single_ssh_command(monkeypatch):
@@ -87,6 +83,45 @@ def test_ssh_failure_surfaces_ssh_error(monkeypatch):
         pull.find_remote_backup("u@h")
     assert "Permission denied" in str(exc.value)
     assert "'SSH' button" in str(exc.value)
+
+
+def test_ssh_timeout_says_key_was_not_checked(monkeypatch):
+    def fake_run(cmd, capture_output=True):
+        return FakeProc(rc=255, err=b"ssh: connect to host visionsol.odoo.com port 22: Operation timed out")
+
+    monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    monkeypatch.setattr(pull.sys, "platform", "linux")
+    with pytest.raises(pull.PullError) as exc:
+        pull.find_remote_backup("22565520@visionsol.odoo.com")
+    message = str(exc.value)
+    assert "private key was not checked" in message
+    assert "nc -vz -w 10 visionsol.odoo.com 22" in message
+    assert "nc -vz -w 10 github.com 22" in message
+    assert "odooctl restore PROJECT" in message
+    assert "Add your public key" not in message
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [
+        ("darwin", "nc -vz -G 10 acme.odoo.com 22"),
+        ("linux", "nc -vz -w 10 acme.odoo.com 22"),
+        ("win32", "Test-NetConnection acme.odoo.com -Port 22"),
+    ],
+)
+def test_tcp_test_command_times_out_on_each_platform(monkeypatch, platform, expected):
+    monkeypatch.setattr(pull.sys, "platform", platform)
+    assert pull._tcp_test_command("acme.odoo.com", 22) == expected
+
+
+def test_connection_refused_skips_timeout_only_hints(monkeypatch):
+    def fake_run(cmd, capture_output=True):
+        return FakeProc(rc=255, err=b"ssh: connect to host acme.odoo.com port 22: Connection refused")
+
+    monkeypatch.setattr(pull.subprocess, "run", fake_run)
+    with pytest.raises(pull.PullError) as exc:
+        pull.find_remote_backup("1@acme.odoo.com")
+    assert "silently dropped" not in str(exc.value)
 
 
 def test_find_remote_backup_persistent_rejection_is_an_ssh_error(monkeypatch):

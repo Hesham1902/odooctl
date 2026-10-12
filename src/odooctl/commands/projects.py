@@ -100,12 +100,36 @@ def _default_parent_dir():
     return existing_roots[0] if existing_roots else str(Path.cwd())
 
 
+_PORT_LABELS = (
+    ("http", "http"),
+    ("longpolling", "longpolling"),
+    ("pg_postgres", "postgres"),
+    ("debugpy", "debugpy"),
+)
+
+
+def _format_ports(ports):
+    """{'http': 8032, 'pg_postgres': 5461} -> 'http 8032, postgres 5461'."""
+    if not isinstance(ports, dict):
+        return str(ports)
+    shown = [(label, ports[key]) for key, label in _PORT_LABELS if key in ports]
+    shown += [(k, v) for k, v in ports.items() if k not in dict(_PORT_LABELS)]
+    return ", ".join(f"{label} {value}" for label, value in shown) or "-"
+
+
+def _human_size(num_bytes):
+    mb = num_bytes / (1024 * 1024)
+    return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:.0f} MB"
+
+
 def _print_init_plan(plan, addon_specs, backup_path, backup_format, pull_options=None):
     click.secho(f"new project   : {plan['slug']}  ->  {plan['path']}", bold=True)
     click.echo(f"template      : {plan['template']} (Odoo {plan['version'] or '?'})")
     click.echo(f"containers    : {plan['container_names']['web']}, {plan['container_names']['db']}")
-    click.echo(f"ports         : {plan['ports']}")
+    click.echo(f"ports         : {_format_ports(plan['ports'])}")
     click.echo(f"copying       : {', '.join(plan['copy'])}")
+    for note in plan.get("notes") or []:
+        click.echo(f"note          : {note}")
     if backup_path:
         click.echo(f"restore from  : {backup_path} ({backup_format})")
     if pull_options:
@@ -117,7 +141,9 @@ def _print_init_plan(plan, addon_specs, backup_path, backup_format, pull_options
         click.echo("addon repos   :")
         for spec in addon_specs:
             ref = f"#{spec.ref}" if spec.ref else ""
-            target = "custom_addons/ (auto layout)" if len(addon_specs) == 1 else f"custom_addons/{spec.name}/"
+            target = (
+                "custom_addons/ (auto layout)" if len(addon_specs) == 1 else f"custom_addons/{spec.name}/"
+            )
             click.echo(f"  - {spec.url}{ref}  ->  {target}")
 
 
@@ -175,19 +201,29 @@ def _run_init_wizard(
         if not from_:
             if click.confirm("Pull the latest Odoo.sh backup over SSH instead?", default=False):
                 pull_from = click.prompt("SSH target", default="ssh://1234567@your-project.odoo.com").strip()
-                pull_path = click.prompt(
-                    "Remote backup path (blank = newest standard backup)", default="", show_default=False
-                ).strip() or None
-                pull_key = click.prompt(
-                    "Private key path (blank = SSH agent/default key)", default="", show_default=False
-                ).strip() or None
+                pull_path = (
+                    click.prompt(
+                        "Remote backup path (blank = newest standard backup)", default="", show_default=False
+                    ).strip()
+                    or None
+                )
+                pull_key = (
+                    click.prompt(
+                        "Private key path (blank = SSH agent/default key)", default="", show_default=False
+                    ).strip()
+                    or None
+                )
                 pull_with_filestore = click.confirm("Include filestore and attachments?", default=False)
                 pull_no_reset_admin = not click.confirm("Reset admin/admin after restore?", default=True)
-                pull_no_sanitize = not click.confirm("Sanitize the database for local development?", default=True)
+                pull_no_sanitize = not click.confirm(
+                    "Sanitize the database for local development?", default=True
+                )
                 pull_no_fix_icons = not click.confirm("Repair missing menu icons?", default=True)
                 pull_keep_download = click.confirm("Keep the downloaded backup bundle?", default=False)
                 pull_yes = click.confirm("Replace an existing local database without asking?", default=False)
-                pull_save = click.confirm("Remember these connection settings for future pulls?", default=True)
+                pull_save = click.confirm(
+                    "Remember these connection settings for future pulls?", default=True
+                )
 
     if not version and not template:
         projects = registry.get_projects()
@@ -217,11 +253,13 @@ def _run_init_wizard(
         db = db or click.prompt("Database name for the pull", default=f"{provision.slugify(name)}_pulled")
 
     addon_repos = list(addon_repos or ())
-    answer = click.prompt(
-        "Add an addon repository? (y/n, or paste the repository URL)", default="n"
-    ).strip()
+    answer = click.prompt("Add an addon repository? (y/n, or paste the repository URL)", default="n").strip()
     while answer.lower() not in {"", "n", "no"}:
-        url = click.prompt("  Repo URL (git clone target)").strip() if answer.lower() in {"y", "yes"} else answer
+        url = (
+            click.prompt("  Repo URL (git clone target)").strip()
+            if answer.lower() in {"y", "yes"}
+            else answer
+        )
         ref = click.prompt("  Branch/tag (blank = default branch)", default="", show_default=False).strip()
         addon_repos.append(f"{url}#{ref}" if ref else url)
         answer = click.prompt(
@@ -285,7 +323,9 @@ def _run_init_wizard(
     default=None,
     help="Pull the latest Odoo.sh backup over SSH after the new project starts.",
 )
-@click.option("--pull-path", default=None, help="Remote backup path for --pull-from (default: newest standard backup).")
+@click.option(
+    "--pull-path", default=None, help="Remote backup path for --pull-from (default: newest standard backup)."
+)
 @click.option(
     "--pull-key",
     type=click.Path(exists=True),
@@ -297,8 +337,12 @@ def _run_init_wizard(
 @click.option("--pull-no-sanitize", is_flag=True, help="Skip local sanitization when using --pull-from.")
 @click.option("--pull-no-fix-icons", is_flag=True, help="Skip menu icon repair when using --pull-from.")
 @click.option("--pull-keep-download", is_flag=True, help="Keep the downloaded bundle when using --pull-from.")
-@click.option("--pull-yes", is_flag=True, help="Replace an existing local database without asking when pulling.")
-@click.option("--pull-save", is_flag=True, help="Remember SSH settings for future `odooctl pull PROJECT` runs.")
+@click.option(
+    "--pull-yes", is_flag=True, help="Replace an existing local database without asking when pulling."
+)
+@click.option(
+    "--pull-save", is_flag=True, help="Remember SSH settings for future `odooctl pull PROJECT` runs."
+)
 @click.option(
     "--addon-repo",
     "addon_repos",
@@ -401,8 +445,21 @@ def init(
 
     if from_ and pull_from:
         raise click.ClickException("Choose either a local --from backup or --pull-from SSH target, not both.")
-    if any((pull_path, pull_key, pull_with_filestore, pull_no_reset_admin, pull_no_sanitize, pull_no_fix_icons,
-            pull_keep_download, pull_yes)) and not pull_from:
+    if (
+        any(
+            (
+                pull_path,
+                pull_key,
+                pull_with_filestore,
+                pull_no_reset_admin,
+                pull_no_sanitize,
+                pull_no_fix_icons,
+                pull_keep_download,
+                pull_yes,
+            )
+        )
+        and not pull_from
+    ):
         raise click.ClickException("--pull-* options require --pull-from SSH_TARGET.")
 
     if not dry_run and not interactive:
@@ -506,18 +563,39 @@ def init(
         compose.run(project_entry["path"], "up", "-d", "--no-build")
     else:
         click.echo(f"\n[{slug}] building images (first time only, ~5-10 min)...")
-        compose.run(project_entry["path"], "up", "-d", "--build")
+        try:
+            compose.run(project_entry["path"], "up", "-d", "--build")
+        except compose.DockerError as exc:
+            output, hint = compose.explain_build_error(exc)
+            lines = [f"image build failed:\n{output}"]
+            if hint:
+                lines.append(f"\nHint: {hint}")
+            lines.append(
+                f"\nThe project was created at {project_entry['path']}. "
+                f"After fixing, run `odooctl up {slug} --build`"
+                + (f", then `odooctl pull {slug}`." if pull_options else ".")
+            )
+            raise click.ClickException("\n".join(lines)) from exc
 
     if backup_path:
         database = restore_mod.target_name(backup_path, restore_mod.detect_format(backup_path), db)
         if not database:
             database = f"{slug}_db"
             click.secho(f"(no name in backup; using '{database}')", fg="yellow")
-        click.echo(f"[{slug}] restoring {backup_path.name} into '{database}'...")
+        size = _human_size(backup_path.stat().st_size) if backup_path.is_file() else None
+        click.echo(
+            f"[{slug}] restoring {backup_path.name}"
+            + (f" ({size})" if size else "")
+            + f" into '{database}' - large dumps take a few minutes..."
+        )
         try:
             info = restore_mod.restore(project_entry["path"], project_entry, backup_path, database)
         except (ValueError, compose.DockerError) as exc:
-            raise click.ClickException(f"restore failed: {exc}")
+            raise click.ClickException(
+                f"restore failed: {exc}\n"
+                f"The project was created at {project_entry['path']} and its containers are up.\n"
+                f"Retry the restore alone with `odooctl restore {slug} {backup_path}`."
+            ) from exc
         if not info["filestore"]:
             click.secho("[!] no filestore in backup - attachments missing", fg="yellow")
         if not no_reset_admin:

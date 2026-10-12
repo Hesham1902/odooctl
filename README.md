@@ -156,8 +156,8 @@ release workflow builds separate Apple Silicon and Intel `.dmg` installers plus
 Linux AppImage and `.deb` packages whenever a `v*` tag is pushed:
 
 ```bash
-git tag v0.6.2
-git push origin v0.6.2
+git tag v0.6.3
+git push origin v0.6.3
 ```
 
 The workflow keeps a new release as a draft while it builds and uploads every
@@ -317,6 +317,7 @@ for renamed commands: `url` still invokes `open`, and `df` still invokes `space`
 |---|---|---|
 | Project management | `discover` | (Re)scan folders for Odoo projects |
 | Project management | `projects` | List registered projects |
+| Project management | `doctor` | Check Docker, saved projects, SSH tools, and release access |
 | Project management | `init` | Bootstrap a new project |
 | Project management | `remove` | Stop, unregister and optionally delete a project |
 | Runtime | `status` | Containers + databases, all projects or one |
@@ -347,6 +348,20 @@ odooctl --debug status
 ```
 
 Detailed documentation for every command follows.
+
+---
+
+## `doctor` - check your local setup
+
+Run `odooctl doctor` when a project command fails or after moving a project folder.
+It checks Docker and Compose, validates each registered project's Compose file
+(including that its registered path matches the on-disk letter case, since a
+mismatch makes Docker bind mounts come up empty on macOS), checks SSH tools for
+backup pulls, and contacts the release feed directly unless
+update checks are disabled. Each
+failure includes a concrete next step. The command does not start containers or
+change your registry. It exits with status 1 if a check fails; warnings, such as
+an available update, leave the exit status at 0.
 
 ---
 
@@ -622,6 +637,9 @@ Behaviour:
 - Override the target name with `--name other-db` (useful for keeping the original).
 - Missing filestore produces a warning - attachments will be broken but the rest
   works.
+- `\restrict` / `\unrestrict` lines (added by pg_dump 17.6+ and recent odoo.sh
+  dumps) are stripped before the SQL replay, so an older `psql` in the db container
+  does not abort with `invalid command \restrict`.
 - After restore, the main internal user is automatically reset to `admin`/`admin`
   (see next section). Disable with `--no-reset-admin`.
 - Add `--sanitize` to make the result safe to work on locally (see `sanitize`).
@@ -667,9 +685,11 @@ odooctl fix-icons acme -d acme-prod
 ```
 
 It checks every menu with a `web_icon`, tests whether its attachment resolves to a
-real file, and for broken ones re-reads the image from
-`custom_addons/<module>/static/...` (core addon paths work too). Intact icons are
-left alone. Restart web or hard-refresh the browser afterwards.
+real file, and for broken ones re-reads the image from the module folder on Odoo's
+`addons_path` (custom, enterprise and core addons alike). Menus hidden by groups
+(e.g. Link Tracker, debug-only) are included; Font Awesome icons (`fa fa-...`) are
+skipped since they have no file. Intact icons are left alone. Restart web or
+hard-refresh the browser afterwards.
 
 `pull` and `restore` run this automatically whenever the restore had no filestore,
 so icons come back without any extra step. Icons that exist neither in the database
@@ -755,8 +775,9 @@ odooctl reset-admin acme -d acme-prod --user-id 5     # force specific user
 
 How it works:
 
-1. Lists internal users (`share = false`) ordered by id and picks the first real one -
-   skipping Odoo's system user (id 1). You'll be shown who was changed:
+1. Lists internal users (`share = false`) ordered by id. A user that already has the
+   target login wins (resetting another one would hit Odoo's unique-login check);
+   otherwise it picks the first real one, skipping Odoo's system user (id 1). You'll be shown who was changed:
    ```
    [acme] user #2 (Marc Demo) was 'marc@company.example' -> now 'admin' / 'admin'
    ```
@@ -793,8 +814,17 @@ odooctl init
 
 When asked whether to add an addon repository, answer `y` and enter its URL on
 the next line, or paste the URL directly at the yes/no prompt. Docker must be
-running before the wizard starts; `--dry-run` is the exception and does not
-need a Docker daemon.
+running before the wizard starts; on macOS, if OrbStack or Docker Desktop is
+installed but stopped, `init` (and every other Docker-backed command run from a
+terminal) offers to start it and waits for the daemon. `--dry-run` is the
+exception and does not need a Docker daemon.
+
+The parent directory is normalised to its on-disk letter case before anything is
+created (`/users/me/work` becomes `/Users/me/work`). This matters: Docker Desktop
+and OrbStack only share `/Users`, so a project created under a lowercase spelling
+would start with *empty* `config/` and `custom_addons/` mounts inside the
+container. `odooctl doctor` flags any already-registered project with that
+problem and tells you how to re-register it.
 
 You get a full plan - target folder, ports, container names, backup, addon
 repos - printed *before* anything is touched, with a final
@@ -859,7 +889,11 @@ Step by step, `init`:
    once per Dockerfile/version per machine). Force a rebuild with `--build`.
 7. **Restores or pulls** the backup into a database (named after the backup's metadata,
    `--db`, or `<slug>_pulled`) including the filestore when selected, then applies
-   the configured admin reset and sanitization safety steps.
+   the configured admin reset and sanitization safety steps. The restore first waits
+   for Postgres to accept connections (a fresh database volume needs a few seconds
+   to initialise after `up`), so it never races the container start. If the
+   restore still fails, the project and its containers are kept and the message
+   names the exact `odooctl restore <slug> <backup>` command to retry with.
 8. **Waits** until Odoo actually answers on its port, then prints the URL.
 
 Options:
@@ -1142,6 +1176,26 @@ actually needs the extension, add it to your `postgres.Dockerfile` and rebuild.
 No prebuilt image existed for that Odoo version/Dockerfile yet, so a real build ran.
 It won't happen again on that machine - later inits reuse the image in seconds. Use
 `--build` only after intentionally changing a Dockerfile.
+
+**Debian 11 build failures (`apt-get ... exit code: 100` on Odoo 15/16)**
+The `odoo:15.0` and `odoo:16.0` images run Debian 11 (bullseye), which is end-of-life.
+deb.debian.org no longer serves its security packages, so any `RUN apt-get install` in
+`odoo.Dockerfile` fails with `404 Not Found`. New projects created by `init` get the fix
+automatically (the plan shows a `note : odoo.Dockerfile: added Debian 11 apt fix` line).
+For an existing project, add this block above the first `RUN apt-get` line in its
+`odoo.Dockerfile`, then run `odooctl up <project> --build`:
+
+```dockerfile
+RUN if grep -q 'VERSION_CODENAME=bullseye' /etc/os-release \
+        && grep -q '^# deb http://snapshot.debian.org' /etc/apt/sources.list; then \
+        sed -i -e 's|^deb http://deb.debian.org|# deb http://deb.debian.org|' \
+            -e 's|^# deb http://snapshot.debian.org|deb [check-valid-until=no] http://snapshot.debian.org|' \
+            /etc/apt/sources.list; \
+    fi
+```
+
+It switches apt to the frozen snapshot.debian.org copy that the base image was built
+from. On newer (non-bullseye) images the block does nothing.
 
 **Ports in `init` look odd (8074 instead of 8070)**
 Port allocation skips anything already used by registered projects or occupied on

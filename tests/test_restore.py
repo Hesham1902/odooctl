@@ -1,5 +1,7 @@
 import zipfile
 
+import pytest
+
 from odooctl import restore
 
 
@@ -112,6 +114,15 @@ def test_sql_chunks_filters_restrict(tmp_path):
     text = b"".join(chunks).decode()
     assert "restrict" not in text
     assert "SELECT 1;" in text and "SELECT 2;" in text
+
+
+def test_sql_chunks_filters_restrict_in_plain_sql(tmp_path):
+    # odoo.sh .zip backups carry an uncompressed dump.sql
+    sql = tmp_path / "dump.sql"
+    sql.write_text("\\restrict abc123\nSELECT 1;\n\\unrestrict abc123\n")
+    text = b"".join(restore._sql_chunks(sql)).decode()
+    assert "restrict" not in text
+    assert "SELECT 1;" in text
 
 
 def test_sql_chunks_skips_unavailable_extensions(tmp_path):
@@ -303,3 +314,56 @@ def test_restore_odoosh_raw_create_style_renames(tmp_path, monkeypatch):
     assert terminates
     renames = [c for c in exec_calls if any("ALTER DATABASE" in str(a) for a in c[1])]
     assert renames and 'ALTER DATABASE "prod-daily" RENAME TO "acme_prod"' in renames[0][1][-1]
+
+
+def test_wait_for_db_retries_until_pg_isready_succeeds(monkeypatch):
+    codes = iter([2, 2, 0])
+    calls = []
+
+    class Proc:
+        def __init__(self, rc):
+            self.returncode = rc
+
+    def fake_exec(project_path, service, *cmd, **kw):
+        calls.append(cmd)
+        return Proc(next(codes))
+
+    monkeypatch.setattr(restore.compose, "exec_service", fake_exec)
+    entry = {"services": {"web": "web", "db": "db"}, "db_user": "odoo"}
+    attempts = restore.wait_for_db("/proj", entry, timeout=30, sleep=lambda s: None)
+    assert attempts == 3
+    assert calls[0][0] == "pg_isready" and "-U" in calls[0] and "odoo" in calls[0]
+
+
+def test_wait_for_db_times_out_with_self_explaining_error(monkeypatch):
+    class Proc:
+        returncode = 2
+
+    monkeypatch.setattr(restore.compose, "exec_service", lambda *a, **kw: Proc())
+    clock = iter([0, 0, 50, 100, 150])
+    monkeypatch.setattr(restore.time, "monotonic", lambda: next(clock))
+    entry = {"services": {"web": "web", "db": "afaq_db_svc"}, "db_user": "odoo"}
+    with pytest.raises(restore.compose.DockerError) as exc:
+        restore.wait_for_db("/proj", entry, timeout=90, sleep=lambda s: None)
+    assert "afaq_db_svc" in str(exc.value)
+    assert "docker compose logs" in str(exc.value)
+
+
+def test_restore_waits_for_db_before_touching_it(tmp_path, monkeypatch):
+    order = []
+
+    class Proc:
+        returncode = 0
+        stdout = b""
+
+    def fake_exec(project_path, service, *cmd, **kw):
+        order.append(cmd[0])
+        return Proc()
+
+    monkeypatch.setattr(restore.compose, "exec_service", fake_exec)
+    dump = tmp_path / "x.dump"
+    dump.write_bytes(b"PGDMP")
+    entry = {"services": {"web": "web", "db": "db"}, "db_user": "odoo"}
+    restore.restore("/proj", entry, dump, "x")
+    assert order[0] == "pg_isready"
+    assert "pg_restore" in order

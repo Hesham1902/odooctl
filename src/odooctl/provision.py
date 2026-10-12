@@ -1,4 +1,5 @@
 import copy
+import os
 import re
 import shutil
 import socket
@@ -118,6 +119,42 @@ def ports_of(data, web_name, db_name):
     return ports
 
 
+BULLSEYE_APT_MARKER = "odooctl: Debian 11 (bullseye) apt fix"
+
+# The odoo:15.0 / odoo:16.0 images are Debian 11. Since bullseye's end of life,
+# deb.debian.org no longer serves its security packages, so `apt-get install`
+# fails with 404s. The images ship commented-out snapshot.debian.org lines
+# pinned to their build date; switching to those restores a consistent,
+# frozen package set. The guard makes this a no-op on newer base images.
+BULLSEYE_APT_FIX = f"""\
+# {BULLSEYE_APT_MARKER}: bullseye is end-of-life and deb.debian.org no longer
+# serves its security packages. Use the snapshot the base image was built from.
+RUN if grep -q 'VERSION_CODENAME=bullseye' /etc/os-release \\
+        && grep -q '^# deb http://snapshot.debian.org' /etc/apt/sources.list; then \\
+        sed -i -e 's|^deb http://deb.debian.org|# deb http://deb.debian.org|' \\
+            -e 's|^# deb http://snapshot.debian.org|deb [check-valid-until=no] http://snapshot.debian.org|' \\
+            /etc/apt/sources.list; \\
+    fi
+"""
+
+
+def patch_eol_apt_sources(dockerfile_text):
+    """Insert BULLSEYE_APT_FIX before the first apt-get RUN line.
+
+    Returns (new_text, changed). Leaves files alone that already point apt at
+    snapshot/archive mirrors or never call apt-get.
+    """
+    if any(s in dockerfile_text for s in (BULLSEYE_APT_MARKER, "snapshot.debian.org", "archive.debian.org")):
+        return dockerfile_text, False
+    lines = dockerfile_text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.upper().startswith("RUN") and "apt-get" in stripped:
+            lines.insert(index, BULLSEYE_APT_FIX)
+            return "".join(lines), True
+    return dockerfile_text, False
+
+
 def pick_template(projects, version, template_slug):
     from . import compose
 
@@ -144,6 +181,33 @@ def pick_template(projects, version, template_slug):
     return candidates[0]
 
 
+def canonical_path(path):
+    """Absolute path spelled with the on-disk letter case of each existing component.
+
+    macOS filesystems are case-insensitive, so ``/users/me/work`` opens fine in the
+    shell. Docker Desktop and OrbStack only share ``/Users`` though: a bind mount
+    from ``/users/...`` silently appears EMPTY inside the container (no odoo.conf,
+    no addons). Components that do not exist yet are kept as typed.
+    """
+    path = Path(path).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    fixed = Path(path.anchor)
+    for part in path.parts[1:]:
+        candidate = fixed / part
+        if not candidate.exists():
+            return fixed / Path(*path.parts[path.parts.index(part) :])
+        try:
+            siblings = os.listdir(fixed)
+        except OSError:
+            siblings = []
+        match = next((name for name in siblings if name == part), None) or next(
+            (name for name in siblings if name.lower() == part.lower()), part
+        )
+        fixed = fixed / match
+    return fixed
+
+
 def init_project(name, parent_dir, version=None, template_slug=None, dry_run=False):
     projects = registry.get_projects()
     if not projects:
@@ -155,7 +219,7 @@ def init_project(name, parent_dir, version=None, template_slug=None, dry_run=Fal
     tmpl_slug, tmpl_entry = pick_template(projects, version, template_slug)
     tmpl_version = registry.detect_version(tmpl_entry)
 
-    target = Path(parent_dir).expanduser() / slug
+    target = canonical_path(parent_dir) / slug
     if target.exists():
         raise RuntimeError(f"{target} already exists.")
 
@@ -164,10 +228,19 @@ def init_project(name, parent_dir, version=None, template_slug=None, dry_run=Fal
     new_data, web_name, db_name = rewrite_compose(data, slug, tmpl_version, alloc)
     if web_name is None or db_name is None:
         raise RuntimeError(
-            f"Template '{tmpl_slug}' compose file does not define both a web and a db service; "
-            "cannot use it."
+            f"Template '{tmpl_slug}' compose file does not define both a web and a db service; cannot use it."
         )
     ports = ports_of(new_data, web_name, db_name)
+
+    notes = []
+    template_dockerfile = Path(tmpl_entry["path"]) / "odoo.Dockerfile"
+    patched_dockerfile = None
+    if template_dockerfile.is_file():
+        patched_dockerfile, changed = patch_eol_apt_sources(template_dockerfile.read_text())
+        if changed:
+            notes.append("odoo.Dockerfile: added Debian 11 apt fix (end-of-life mirrors)")
+        else:
+            patched_dockerfile = None
 
     plan = {
         "slug": slug,
@@ -177,6 +250,7 @@ def init_project(name, parent_dir, version=None, template_slug=None, dry_run=Fal
         "ports": ports,
         "container_names": {"web": f"{slug}_web", "db": f"{slug}_db"},
         "copy": COPY_ITEMS + ["custom_addons/ (empty)"],
+        "notes": notes,
     }
     if dry_run:
         return plan, None
@@ -191,6 +265,8 @@ def init_project(name, parent_dir, version=None, template_slug=None, dry_run=Fal
         else:
             shutil.copy2(src, target / item)
     (target / "custom_addons").mkdir()
+    if patched_dockerfile is not None:
+        (target / "odoo.Dockerfile").write_text(patched_dockerfile)
 
     (target / "docker-compose.yml").write_text(
         yaml.safe_dump(new_data, sort_keys=False, default_flow_style=False)

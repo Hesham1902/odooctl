@@ -2,6 +2,7 @@ import gzip
 import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 import time
 from pathlib import Path
@@ -152,15 +153,43 @@ def _ssh_exec(target, port, command, key=None):
     )
 
 
-def _unreachable(target, err):
-    return PullError(
-        f"Cannot reach {target} over SSH.\n{err}\n\n"
-        "Hints:\n"
-        "- Use the exact string from your Odoo.sh 'SSH' button "
-        "(it can look like 'ssh 1234567@acme.odoo.com').\n"
-        "- Add your public key under odoo.sh project Settings -> Keys.\n"
-        f"- Test manually: ssh {target} 'ls -1 /backup.daily/'"
-    )
+def _tcp_test_command(host, port):
+    """A copy-pasteable TCP connect test that also times out on this platform."""
+    if sys.platform == "win32":
+        return f"Test-NetConnection {host} -Port {port}"
+    # macOS nc ignores -w for the connect phase; -G bounds it.
+    flag = "-G" if sys.platform == "darwin" else "-w"
+    return f"nc -vz {flag} 10 {host} {port}"
+
+
+def _unreachable(target, err, port=None):
+    """Turn an SSH failure into hints appropriate to its failure stage."""
+    lower = err.lower()
+    endpoint = f"{target}:{port}" if port else target
+    if any(marker in lower for marker in ("timed out", "no route", "connection refused")):
+        host = endpoint.rsplit("@", 1)[-1].split(":", 1)[0]
+        hints = [
+            "- This failed before SSH authentication; the private key was not checked.",
+            f"- Test TCP reachability: {_tcp_test_command(host, port or 22)}",
+            "- Check the active VPN/firewall and copy the exact host and port from Odoo.sh's SSH button.",
+        ]
+        if "timed out" in lower:
+            hints += [
+                "- A timeout means the connection is silently dropped. If "
+                f"`{_tcp_test_command('github.com', 22)}` works but this host does not, your network "
+                "(or its public IP) is blocked from Odoo.sh SSH. Try another network, such as a "
+                "phone hotspot, or ask your IT team.",
+                "- No SSH access? Download a backup from Odoo.sh (Branches -> Backups -> Download), "
+                "then run `odooctl restore PROJECT FILE.zip --name DB`.",
+            ]
+    else:
+        hints = (
+            "- Use the exact string from your Odoo.sh 'SSH' button "
+            "(it can look like 'ssh 1234567@acme.odoo.com').",
+            "- Add your public key under odoo.sh project Settings -> Keys.",
+            f"- Test manually: ssh {target} 'ls -1 /backup.daily/'",
+        )
+    return PullError(f"Cannot reach {target} over SSH.\n{err}\n\nHints:\n" + "\n".join(hints))
 
 
 def probe(target, port=None, key=None):
@@ -168,7 +197,7 @@ def probe(target, port=None, key=None):
     proc = _ssh_exec(target, port, "echo ODOOCTL_OK", key=key)
     if proc.returncode != 0 or b"ODOOCTL_OK" not in (proc.stdout or b""):
         err = ((proc.stderr or b"") + (proc.stdout or b"")).decode(errors="replace").strip()
-        raise _unreachable(target, err)
+        raise _unreachable(target, err, port=port)
 
 
 def _scan_script(dirs):
@@ -223,7 +252,7 @@ def find_remote_backup(target, port=None, path=None, key=None):
     out = proc.stdout.decode(errors="replace")
     if proc.returncode != 0 or "ODOOCTL_OK" not in out:
         err = ((proc.stderr or b"") + (proc.stdout or b"")).decode(errors="replace").strip()
-        raise _unreachable(target, err)
+        raise _unreachable(target, err, port=port)
     sql_gz = mirror = None
     for line in out.splitlines():
         if sql_gz is None and line.startswith("SQL_GZ="):
@@ -251,11 +280,7 @@ def _stream_remote_tar(
         )
     except FileNotFoundError as exc:
         raise PullError(f"{exc.filename} was not found on PATH. Install it and try again.") from exc
-    reader = (
-        _ProgressReader(src.stdout, label="filestore", progress=on_progress)
-        if progress
-        else src.stdout
-    )
+    reader = _ProgressReader(src.stdout, label="filestore", progress=on_progress) if progress else src.stdout
     root = dest.resolve()
     failure = None
     try:
@@ -284,9 +309,7 @@ def _stream_remote_tar(
 
 def remote_dir_size(target, port, path, key=None):
     """`du -sm` on the remote path -> e.g. '2.3 GB', or None."""
-    proc = _ssh_exec(
-        target, port, f"du -sm {path} 2>/dev/null | cut -f1", key=key
-    )
+    proc = _ssh_exec(target, port, f"du -sm {path} 2>/dev/null | cut -f1", key=key)
     try:
         mb = int(proc.stdout.decode().strip())
     except ValueError:
@@ -341,6 +364,7 @@ def download(target, port, remote, dest_dir, key=None, with_filestore=False, pro
     By default only the .sql.gz is fetched (dev copies rarely need attachments);
     pass with_filestore=True to also stream the remote home/odoo/data tree.
     """
+
     def emit(message):
         if progress:
             progress(message)

@@ -110,9 +110,7 @@ def test_init_destination_conflict_gives_hint(tmp_path, monkeypatch):
     (tmp_path / "acme").mkdir()
     monkeypatch.setattr(cli.compose, "daemon_available", lambda: True)
 
-    result = CliRunner().invoke(
-        cli.main, ["init", "acme", "--version", "18", "--parent-dir", str(tmp_path)]
-    )
+    result = CliRunner().invoke(cli.main, ["init", "acme", "--version", "18", "--parent-dir", str(tmp_path)])
 
     assert result.exit_code != 0
     assert "already exists" in result.output
@@ -254,8 +252,16 @@ def test_init_non_interactive_collection_repo_goes_directly_into_custom_addons(t
 
     result = CliRunner().invoke(
         cli.main,
-        ["init", "acme", "--version", "18", "--parent-dir", str(tmp_path), "--addon-repo",
-         "https://example.com/oca/queue.git"],
+        [
+            "init",
+            "acme",
+            "--version",
+            "18",
+            "--parent-dir",
+            str(tmp_path),
+            "--addon-repo",
+            "https://example.com/oca/queue.git",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -451,3 +457,81 @@ def test_init_interactive_wizard_aborts_without_creating_when_declined(tmp_path,
     assert result.exit_code != 0
     assert not (tmp_path / "acme").exists()
     assert registry.get_projects().get("acme") is None
+
+
+def test_init_build_failure_is_explained_without_traceback(tmp_path, monkeypatch):
+    _register_template(tmp_path)
+    _no_op_full_boot(monkeypatch)
+
+    def failing_run(path, *args, **kwargs):
+        raise cli.compose.DockerError(
+            'target web: failed to solve: process "/bin/bash -c apt-get update" '
+            "did not complete successfully: exit code: 100"
+        )
+
+    monkeypatch.setattr(cli.compose, "run", failing_run)
+
+    result = CliRunner().invoke(cli.main, ["init", "acme", "--version", "18", "--parent-dir", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "image build failed" in result.output
+    assert "Debian 11" in result.output
+    assert "odooctl up acme --build" in result.output
+
+
+def test_init_restore_failure_keeps_project_and_tells_how_to_retry(tmp_path, monkeypatch):
+    _register_template(tmp_path)
+    _no_op_full_boot(monkeypatch)
+    backup = tmp_path / "prod.dump"
+    backup.write_bytes(b"PGDMP")
+
+    def failing_restore(path, ent, src, db):
+        raise cli.compose.DockerError("psql: error: connection to server on socket failed")
+
+    monkeypatch.setattr(cli.restore_mod, "restore", failing_restore)
+
+    result = CliRunner().invoke(
+        cli.main,
+        [
+            "init",
+            "acme",
+            "--version",
+            "18",
+            "--parent-dir",
+            str(tmp_path),
+            "--from",
+            str(backup),
+            "--db",
+            "acme_db",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "restore failed" in result.output
+    assert "containers are up" in result.output
+    assert f"odooctl restore acme {backup}" in result.output
+
+
+def test_init_plan_prints_ports_as_labels_not_dict():
+    assert projects_mod._format_ports(
+        {"http": 8032, "longpolling": 8033, "debugpy": 8726, "pg_postgres": 5461}
+    ) == ("http 8032, longpolling 8033, postgres 5461, debugpy 8726")
+
+
+def test_need_docker_offers_to_start_app_on_mac_tty(monkeypatch):
+    from odooctl.commands import common
+
+    states = iter([False, False, True])
+    monkeypatch.setattr(common.compose, "daemon_available", lambda: next(states))
+    monkeypatch.setattr(common, "_installed_docker_app", lambda: ("OrbStack", "/Applications/OrbStack.app"))
+    monkeypatch.setattr(common.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(common.click, "confirm", lambda *a, **kw: True)
+    opened = []
+    monkeypatch.setattr(common.subprocess, "run", lambda cmd, **kw: opened.append(cmd))
+    monkeypatch.setattr(common.time, "sleep", lambda s: None)
+
+    common.need_docker()  # must not raise
+
+    assert opened == [["open", "-a", "/Applications/OrbStack.app"]]

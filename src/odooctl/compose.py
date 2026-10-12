@@ -74,6 +74,38 @@ def run(
     return proc
 
 
+_BUILD_HINTS = (
+    (
+        ("apt-get", "exit code: 100"),
+        "apt-get could not install packages inside the image. For Odoo 15/16 images this is "
+        "usually Debian 11 (bullseye) being end-of-life: deb.debian.org no longer serves its "
+        'security packages. See "Debian 11 build failures" in the odooctl README for the '
+        "odoo.Dockerfile fix, then rebuild. Otherwise, check your network connection.",
+    ),
+    (
+        ("temporary failure resolving",),
+        "Docker could not reach the internet. Check your network/VPN and Docker Desktop's proxy settings.",
+    ),
+    (
+        ("no space left on device",),
+        "Docker ran out of disk space. Run `odooctl gc` or `docker system prune`, then retry.",
+    ),
+)
+
+
+def explain_build_error(message, tail=12):
+    """Turn raw `docker compose up --build` output into (short_output, hint).
+
+    short_output keeps the last `tail` non-empty lines (the useful part);
+    hint is a plain-language suggestion for known causes, or None.
+    """
+    lines = [line for line in str(message).splitlines() if line.strip()]
+    short_output = "\n".join(lines[-tail:])
+    lowered = str(message).lower()
+    hint = next((h for needles, h in _BUILD_HINTS if all(n in lowered for n in needles)), None)
+    return short_output, hint
+
+
 def live_output(project_path, *args):
     cmd = _base(project_path) + list(args)
     proc = subprocess.Popen(cmd)

@@ -161,3 +161,22 @@ def test_base_accepts_compose_yaml_and_explains_when_missing(tmp_path):
     (d / "compose.yaml").write_text("services: {}")
     cmd = compose._base(d)
     assert cmd[cmd.index("-f") + 1] == str(d / "compose.yaml")
+
+
+def test_explain_build_error_trims_output_and_hints_apt_failures():
+    raw = "\n".join(f"step {i}" for i in range(30)) + (
+        '\ntarget web: failed to solve: process "/bin/bash -c apt-get update '
+        '&& apt-get -y install python3-pip" did not complete successfully: exit code: 100'
+    )
+
+    output, hint = compose.explain_build_error(raw, tail=5)
+
+    assert output.splitlines()[0] == "step 26"
+    assert "exit code: 100" in output
+    assert "Debian 11" in hint
+
+
+def test_explain_build_error_without_known_cause_has_no_hint():
+    output, hint = compose.explain_build_error("boom")
+    assert output == "boom"
+    assert hint is None

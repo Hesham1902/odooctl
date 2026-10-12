@@ -17,6 +17,11 @@ def test_pick_user_explicit_id_wins():
     assert pick_user([(1, "a", "A"), (2, "b", "B")], user_id=7) == 7
 
 
+def test_pick_user_prefers_existing_login_owner():
+    candidates = [(1, "__system__", "Bot"), (2, "mp", "Company"), (8, "admin", "Admin")]
+    assert pick_user(candidates, login="admin") == 8
+
+
 def test_pick_user_empty():
     assert pick_user([]) is None
 

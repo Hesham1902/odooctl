@@ -84,7 +84,13 @@ def up(project, build, no_wait):
     slug, project_entry = entry(project)
     args = ["up", "-d"] + (["--build"] if build else [])
     click.echo(f"[{slug}] starting...")
-    compose.run(project_entry["path"], *args)
+    try:
+        compose.run(project_entry["path"], *args)
+    except compose.DockerError as exc:
+        output, hint = compose.explain_build_error(exc)
+        raise click.ClickException(
+            f"docker compose up failed:\n{output}" + (f"\n\nHint: {hint}" if hint else "")
+        )
     port = project_entry.get("ports", {}).get("http")
     if no_wait or not port:
         click.echo(f"[{slug}] up.")

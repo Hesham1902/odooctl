@@ -3,6 +3,7 @@ import json
 import re
 import tarfile
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -43,6 +44,37 @@ def target_name(src: Path, fmt, override=None):
                     return value
         return None
     return None
+
+
+DB_READY_TIMEOUT = 90
+
+
+def wait_for_db(project_path, entry, timeout=DB_READY_TIMEOUT, sleep=time.sleep):
+    """Block until postgres in the db container accepts connections.
+
+    ``docker compose up -d`` returns as soon as the container starts; on a fresh
+    volume postgres still runs initdb, starts, stops and restarts, which takes a
+    few seconds. The first psql in that window fails with
+    "connection to server on socket ... No such file or directory".
+    """
+    user = entry.get("db_user", "odoo")
+    db_svc = entry["services"]["db"]
+    deadline = time.monotonic() + timeout
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            proc = compose.exec_service(project_path, db_svc, "pg_isready", "-U", user, "-q", check=False)
+            if getattr(proc, "returncode", 1) == 0:
+                return attempts
+        except compose.DockerError:
+            pass
+        if time.monotonic() >= deadline:
+            raise compose.DockerError(
+                f"database container '{db_svc}' did not become ready within {timeout}s.\n"
+                f"Check its logs with `docker compose logs {db_svc}` in the project folder."
+            )
+        sleep(1)
 
 
 def _recreate(project_path, entry, db):
@@ -138,15 +170,16 @@ def _available_extensions(project_path, entry):
         return None
 
 
-def _sql_chunks(gz: Path, available=None, skipped=None):
-    """Yield the dump's SQL as encoded lines, decompressed on the fly.
+def _sql_chunks(path: Path, available=None, skipped=None):
+    """Yield the dump's SQL as encoded lines (.sql.gz decompressed on the fly).
 
     - \\restrict / \\unrestrict (psql >= 17) are dropped: older psql aborts on them.
     - CREATE EXTENSION / COMMENT ON EXTENSION lines for extensions the local
       postgres cannot install are dropped (odoo.sh pre-installs extras like
       pgvector; skipping matches what a manual psql restore silently did).
     """
-    with gzip.open(gz, "rt", encoding="utf-8", errors="replace") as fh:
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             if line.startswith("\\restrict") or line.startswith("\\unrestrict"):
                 continue
@@ -166,6 +199,7 @@ def restore(project_path, entry, src: Path, db):
 
     user = entry.get("db_user", "odoo")
     db_svc = entry["services"]["db"]
+    wait_for_db(project_path, entry)
     _recreate(project_path, entry, db)
 
     if fmt == "dump":
@@ -263,20 +297,11 @@ def restore(project_path, entry, src: Path, db):
         raise ValueError(f"No .sql found inside zip {src}")
     dump_sql = next((f for f in sql_files if f.name == "dump.sql"), sql_files[0])
 
-    with open(dump_sql, "rb") as fh:
-        compose.exec_service(
-            project_path,
-            db_svc,
-            "psql",
-            "-U",
-            user,
-            "-d",
-            db,
-            "-v",
-            "ON_ERROR_STOP=1",
-            capture=False,
-            stdin_file=fh,
-        )
+    compose.run_with_stdin_stream(
+        project_path,
+        ["exec", "-T", db_svc, "psql", "-U", user, "-d", db, "-v", "ON_ERROR_STOP=1"],
+        _sql_chunks(dump_sql, available=_available_extensions(project_path, entry)),
+    )
 
     fs_dir = next((d for d in tmp.rglob("filestore") if d.is_dir()), None)
     if fs_dir and any(fs_dir.iterdir()):

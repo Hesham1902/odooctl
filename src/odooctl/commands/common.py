@@ -1,6 +1,9 @@
+import subprocess
+import sys
 import time
 import urllib.request
 from contextlib import contextmanager
+from pathlib import Path
 
 import click
 
@@ -34,9 +37,49 @@ def entry(name):
         raise click.ClickException(f"{exc}\nHint: run `odooctl projects` to list registered projects.")
 
 
+_DOCKER_APPS = (("OrbStack", "/Applications/OrbStack.app"), ("Docker Desktop", "/Applications/Docker.app"))
+DOCKER_START_TIMEOUT = 90
+
+
+def _installed_docker_app():
+    if sys.platform != "darwin":
+        return None
+    for name, app in _DOCKER_APPS:
+        if Path(app).is_dir():
+            return name, app
+    return None
+
+
+def _offer_docker_start():
+    """Interactive macOS only: start the installed Docker app and wait for the daemon."""
+    found = _installed_docker_app()
+    if not found or not sys.stdin.isatty():
+        return False
+    name, app = found
+    if not click.confirm(f"Docker is not running. Start {name} now?", default=True):
+        return False
+    try:
+        subprocess.run(["open", "-a", app], check=True, capture_output=True, timeout=30)
+    except Exception as exc:
+        click.secho(f"could not start {name}: {exc}", fg="yellow")
+        return False
+    click.echo(f"waiting for {name} to come up (up to {DOCKER_START_TIMEOUT}s)...", nl=False)
+    deadline = time.time() + DOCKER_START_TIMEOUT
+    while time.time() < deadline:
+        if compose.daemon_available():
+            click.echo(" ready.")
+            return True
+        click.echo(".", nl=False)
+        time.sleep(2)
+    click.echo("")
+    return False
+
+
 def need_docker():
     with measure("docker availability"):
         available = compose.daemon_available()
+    if not available and _offer_docker_start():
+        return
     if not available:
         raise click.ClickException(
             "Docker daemon not reachable. Start Docker Desktop or OrbStack and try again.\n"

@@ -184,3 +184,71 @@ def test_slugify():
     assert provision.slugify("New Client 18") == "new-client-18"
     assert provision.slugify("My_Project!") == "my-project"
     assert provision.slugify("///") is None
+
+
+BULLSEYE_DOCKERFILE = """FROM odoo:16.0
+
+USER root
+SHELL ["/bin/bash", "-c"]
+RUN apt-get update \\
+    && apt-get -y install python3-pip python3-venv
+
+RUN pip install ipdb
+"""
+
+
+def test_patch_eol_apt_sources_inserts_fix_before_first_apt_run():
+    text, changed = provision.patch_eol_apt_sources(BULLSEYE_DOCKERFILE)
+
+    assert changed
+    assert text.index(provision.BULLSEYE_APT_MARKER) < text.index("RUN apt-get update")
+    assert text.index("USER root") < text.index(provision.BULLSEYE_APT_MARKER)
+    assert "deb [check-valid-until=no] http://snapshot.debian.org" in text
+
+
+def test_patch_eol_apt_sources_is_idempotent_and_skips_files_without_apt():
+    once, _ = provision.patch_eol_apt_sources(BULLSEYE_DOCKERFILE)
+    twice, changed = provision.patch_eol_apt_sources(once)
+    assert not changed
+    assert twice == once
+
+    no_apt = "FROM odoo:18.0\nRUN pip install ipdb\n"
+    assert provision.patch_eol_apt_sources(no_apt) == (no_apt, False)
+
+
+def test_init_project_patches_copied_dockerfile_and_keeps_template(tmp_path, monkeypatch):
+    template_dir = tmp_path / "tmpl"
+    template_dir.mkdir()
+    import yaml
+
+    (template_dir / "docker-compose.yml").write_text(yaml.safe_dump(_template_data("16")))
+    (template_dir / "odoo.Dockerfile").write_text(BULLSEYE_DOCKERFILE)
+    entry = {
+        "compose_file": str(template_dir / "docker-compose.yml"),
+        "path": str(template_dir),
+        "services": {"web": "web", "db": "db"},
+        "ports": {},
+    }
+    monkeypatch.setattr(provision.registry, "get_projects", lambda: {"tmpl": entry})
+    monkeypatch.setattr(provision.registry, "register", lambda slug, e: None)
+
+    plan, _ = provision.init_project("acme", tmp_path, template_slug="tmpl")
+
+    assert any("Debian 11" in note for note in plan["notes"])
+    copied = (tmp_path / "acme" / "odoo.Dockerfile").read_text()
+    assert provision.BULLSEYE_APT_MARKER in copied
+    assert (template_dir / "odoo.Dockerfile").read_text() == BULLSEYE_DOCKERFILE
+
+
+def test_canonical_path_fixes_letter_case_of_existing_components(tmp_path):
+    (tmp_path / "Work" / "TDS").mkdir(parents=True)
+    typed = tmp_path / "work" / "tds" / "newproj"
+    if not typed.parent.exists():
+        pytest.skip("case-sensitive filesystem")
+    fixed = provision.canonical_path(typed)
+    assert fixed == tmp_path / "Work" / "TDS" / "newproj"
+
+
+def test_canonical_path_keeps_missing_tail_as_typed(tmp_path):
+    fixed = provision.canonical_path(tmp_path / "Nope" / "Deeper")
+    assert fixed == tmp_path / "Nope" / "Deeper"
