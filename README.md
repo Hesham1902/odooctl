@@ -156,8 +156,8 @@ release workflow builds separate Apple Silicon and Intel `.dmg` installers plus
 Linux AppImage and `.deb` packages whenever a `v*` tag is pushed:
 
 ```bash
-git tag v0.6.3
-git push origin v0.6.3
+git tag v0.6.4
+git push origin v0.6.4
 ```
 
 The workflow keeps a new release as a draft while it builds and uploads every

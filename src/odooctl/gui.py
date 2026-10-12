@@ -301,6 +301,7 @@ def launch():
     """Open the optional desktop project manager and run its event loop."""
     prepare_gui_environment()
     try:
+        import shiboken6
         from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtWidgets import (
@@ -847,7 +848,10 @@ def launch():
             self.set_busy(True)
             self.statusBar().showMessage(status)
             self._task_finished = callback
-            self._thread = QThread(self)
+            # Thread and worker are owned by Python only (no Qt parent, no deleteLater):
+            # _refresh_finished waits for the thread, then drops both references. Mixing
+            # Qt and Python ownership deleted objects twice and crashed on exit.
+            self._thread = QThread()
             self._worker = TaskWorker(task, with_progress=progress)
             self._worker.moveToThread(self._thread)
             self._thread.started.connect(self._worker.run)
@@ -855,8 +859,6 @@ def launch():
                 self._worker.progress.connect(self.show_task_progress)
             self._worker.finished.connect(self._task_done)
             self._worker.finished.connect(self._thread.quit)
-            self._worker.finished.connect(self._worker.deleteLater)
-            self._thread.finished.connect(self._thread.deleteLater)
             self._thread.finished.connect(self._refresh_finished)
             self._thread.start()
 
@@ -1014,7 +1016,13 @@ def launch():
                 return
             event.accept()
 
+        def wait_for_task(self):
+            """Block until the running worker thread (if any) has fully stopped."""
+            if self._thread is not None:
+                self._thread.wait()
+
         def _refresh_finished(self):
+            self.wait_for_task()
             self._task_finished = None
             self._worker = None
             self._thread = None
@@ -1031,4 +1039,12 @@ def launch():
     window.show()
     window.refresh()
     window.check_for_updates()
-    return app.exec()
+    result = app.exec()
+    # The event loop can stop while a refresh still runs; let it end before the
+    # window (and its thread) is destroyed.
+    window.wait_for_task()
+    # Signal connections form reference cycles, so Python would free the window only
+    # at interpreter exit, after QApplication is gone, which segfaults. Delete the
+    # C++ window now while the application still exists.
+    shiboken6.delete(window)
+    return result
