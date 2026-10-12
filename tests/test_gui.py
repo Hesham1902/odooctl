@@ -139,42 +139,66 @@ def test_gui_command_defers_update_check_to_window(monkeypatch):
     assert result.exit_code == 0, result.output
 
 
-def test_desktop_shows_update_without_blocking_project_refresh(monkeypatch):
-    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    monkeypatch.delenv("ODOOCTL_NO_UPDATE_CHECK", raising=False)
-    monkeypatch.setattr(gui.update, "check_for_update", lambda: "99.0.0")
-    monkeypatch.setattr(gui, "load_project_status", lambda: [])
+_DESKTOP_UPDATE_SCRIPT = r"""
+import json
+import sys
 
-    from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QPushButton
 
-    app = QApplication.instance() or QApplication([])
-    observed = []
-    finished = [False]
+from odooctl import gui
 
-    def inspect():
-        if finished[0]:
+gui.update.check_for_update = lambda: "99.0.0"
+gui.load_project_status = lambda: []
+
+app = QApplication.instance() or QApplication([])
+observed = []
+
+
+def inspect():
+    windows = [w for w in app.topLevelWidgets() if w.windowTitle() == "odooctl"]
+    if windows:
+        button = windows[0].findChild(QPushButton, "UpdateButton")
+        if button and button.isVisible():
+            observed.append(button.text())
+            windows[0].close()
+            app.quit()
             return
-        windows = [window for window in app.topLevelWidgets() if window.windowTitle() == "odooctl"]
-        if windows:
-            button = windows[0].findChild(QPushButton, "UpdateButton")
-            if button and button.isVisible():
-                observed.append(button.text())
-                windows[0].close()
-                app.quit()
-                return
-        QTimer.singleShot(10, inspect)
+    QTimer.singleShot(20, inspect)
 
-    timeout = QTimer()
-    timeout.setSingleShot(True)
-    timeout.timeout.connect(app.quit)
-    QTimer.singleShot(0, inspect)
-    timeout.start(3000)
-    result = gui.launch()
-    finished[0] = True
-    timeout.stop()
-    assert result == 0
-    assert observed == ["odooctl 99.0.0 available · View release"]
+
+QTimer.singleShot(0, inspect)
+# Generous: a fresh CI runner builds its font cache on the first Qt start.
+QTimer.singleShot(30000, app.quit)
+result = gui.launch()
+print("RESULT " + json.dumps({"result": result, "observed": observed}), flush=True)
+"""
+
+
+def test_desktop_shows_update_without_blocking_project_refresh(tmp_path):
+    """Run the real window in its own process: Qt state or a crash on exit must
+    never leak into (or hang) the rest of the test session."""
+    pytest.importorskip("PySide6")
+    import json
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ, QT_QPA_PLATFORM="offscreen", HOME=str(tmp_path))
+    env.pop("ODOOCTL_NO_UPDATE_CHECK", None)
+    proc = subprocess.run(
+        [sys.executable, "-c", _DESKTOP_UPDATE_SCRIPT],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    lines = [line for line in proc.stdout.splitlines() if line.startswith("RESULT ")]
+    assert lines, f"no result (rc={proc.returncode})\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    data = json.loads(lines[-1][len("RESULT ") :])
+    assert data["result"] == 0
+    assert data["observed"] == ["odooctl 99.0.0 available · View release"]
+    assert proc.returncode == 0, f"desktop app exited with {proc.returncode}\nstderr:\n{proc.stderr}"
 
 
 def test_rewrite_compose_localizes_windows_home_path(tmp_path):
