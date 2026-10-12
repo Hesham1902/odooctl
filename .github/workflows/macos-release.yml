@@ -173,12 +173,6 @@ jobs:
             exit 1
           }
 
-      - name: Run tests
-        timeout-minutes: 15
-        run: |
-          ruff check src tests
-          pytest -q
-
       - name: Install Linux packaging tools
         run: |
           sudo apt-get update
@@ -193,6 +187,14 @@ jobs:
             --output /tmp/appimagetool \
             https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /tmp/appimagetool
+
+      # After the packaging tools: the desktop tests need the Qt system libraries
+      # (libEGL and friends) that step installs.
+      - name: Run tests
+        timeout-minutes: 15
+        run: |
+          ruff check src tests
+          pytest -q -rf
 
       - name: Build Linux desktop packages
         env:

@@ -117,7 +117,7 @@ def test_find_compose_file_uses_docker_precedence(tmp_path):
     assert compose.find_compose_file(d).name == "compose.yaml"
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0, reason="root bypasses file permissions")
 def test_find_compose_file_returns_none_for_unreadable_dir(tmp_path):
     # Bind-mount data folders owned by root: on Python <=3.12, stat() on the
     # candidates raises EACCES instead of returning False.

@@ -110,7 +110,7 @@ def test_discover_finds_project_in_cwd_without_saving_it(tmp_path, monkeypatch):
     assert _config()["projects"]["acme"]["path"] == str(proj.resolve())
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses file permissions")
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0, reason="root bypasses file permissions")
 def test_discover_survives_unreadable_data_dirs(tmp_path, monkeypatch):
     # Issue #1: stat() on compose candidates inside a root-owned bind-mount
     # data folder raised PermissionError (Python <=3.12 pathlib) and killed the
