@@ -28,4 +28,20 @@ jobs:
       - name: Lint
         run: ruff check src tests
       - name: Tests
-        run: pytest -q
+        timeout-minutes: 15
+        run: pytest -q -rf
+
+  gui:
+    # Same environment as the Linux release job: catches Qt-only test failures
+    # without having to cut a release.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[dev,gui]"
+      - name: Tests
+        timeout-minutes: 15
+        run: pytest -q -rf

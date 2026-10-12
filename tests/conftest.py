@@ -1,7 +1,41 @@
+import os
+import subprocess
 import textwrap
 
 import pytest
 import yaml
+
+_BLOCKED_BINARIES = {"docker", "ssh", "scp"}
+
+
+def _blocked(cmd):
+    if isinstance(cmd, (list, tuple)) and cmd:
+        return os.path.basename(str(cmd[0])) in _BLOCKED_BINARIES
+    return False
+
+
+@pytest.fixture(autouse=True)
+def no_real_docker_or_ssh(monkeypatch):
+    """Tests must never reach the developer's Docker daemon or a remote host.
+
+    An unmocked call behaves as if the binary were not installed, which every
+    caller already handles. Tests that patch subprocess themselves override this.
+    """
+    real_run, real_popen = subprocess.run, subprocess.Popen
+
+    def guarded_run(cmd, *args, **kwargs):
+        if _blocked(cmd):
+            raise FileNotFoundError(2, "blocked in tests", str(cmd[0]))
+        return real_run(cmd, *args, **kwargs)
+
+    class GuardedPopen(real_popen):
+        def __init__(self, cmd, *args, **kwargs):
+            if _blocked(cmd):
+                raise FileNotFoundError(2, "blocked in tests", str(cmd[0]))
+            super().__init__(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", guarded_run)
+    monkeypatch.setattr(subprocess, "Popen", GuardedPopen)
 
 
 @pytest.fixture(autouse=True)

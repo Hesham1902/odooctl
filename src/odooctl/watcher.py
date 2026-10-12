@@ -3,13 +3,18 @@ from pathlib import Path
 
 
 def snapshot(root, exts=("py",)):
-    """{path: mtime} for every matching file under root (poll-based, bind-mount safe)."""
+    """{path: (mtime_ns, size)} for every matching file under root (poll-based, bind-mount safe).
+
+    Size is part of the signature because Linux file timestamps advance in coarse
+    ticks: two saves inside one tick keep the same mtime.
+    """
     sig = {}
     root = Path(root)
     for p in root.rglob("*"):
         if p.suffix.lstrip(".").lower() in exts and p.is_file():
             try:
-                sig[str(p)] = p.stat().st_mtime
+                stat = p.stat()
+                sig[str(p)] = (stat.st_mtime_ns, stat.st_size)
             except OSError:
                 continue
     return sig

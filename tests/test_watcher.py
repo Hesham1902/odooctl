@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -59,6 +60,10 @@ def test_watch_restarts_on_change(tmp_path, monkeypatch):
         state["n"] += 1
         if state["n"] == 2:
             f.write_text("v2")  # edit between baseline and first poll
+            # Same size, and Linux mtimes advance in coarse ticks: push the mtime
+            # forward so the edit is visible on every filesystem.
+            later = f.stat().st_mtime + 5
+            os.utime(f, (later, later))
         return real_snapshot(root, exts)
 
     monkeypatch.setattr(watcher, "snapshot", flaky_snapshot)
